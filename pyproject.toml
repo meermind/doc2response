@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "doc2response"
+version = "0.1.0"
+description = ""
+authors = ["datagero <datagero@outlook.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+llama-index = "^0.11.20"
+llama-index-vector-stores-faiss = "^0.2.1"
+faiss-cpu = "^1.9.0"
+python-dotenv = "^1.0.1"
+pymysql = "^1.1.1"
+llama-index-vector-stores-tidbvector = "^0.2.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

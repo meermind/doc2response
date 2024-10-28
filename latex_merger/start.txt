@@ -1,0 +1,110 @@
+\documentclass{article}
+\usepackage{titlesec}
+\usepackage[table]{xcolor}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath, amsfonts, graphicx, xcolor}
+\usepackage{mdframed}
+\usepackage{geometry}
+\usepackage{fancyhdr}
+\usepackage{hyperref}
+\usepackage{listings} % For code highlighting
+\usepackage{caption}
+\usepackage{array}
+\usepackage{tabularx}
+
+
+\geometry{a4paper, margin=1in}
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{TEMPLATE_COURSE_NAME}
+\lhead{\today}
+\cfoot{\thepage}
+
+% Define the style of the frame
+\mdfdefinestyle{detailsstyle}{
+    backgroundcolor=gray!10, % light gray background
+    linewidth=0pt, % no border
+    innertopmargin=10pt, % space before the content
+    innerbottommargin=10pt, % space after the content
+    innerrightmargin=10pt, % space to the right of the content
+    innerleftmargin=10pt, % space to the left of the content
+    splittopskip=\topskip, % space at the top of the split frame
+}
+
+% Define the style for the cheat-sheet
+\mdfdefinestyle{cheatsheetstyle}{
+    backgroundcolor=blue!10, % light blue background
+    linewidth=1pt, % border size
+    linecolor=blue!50, % border color
+    innertopmargin=10pt, % space before the content
+    innerbottommargin=10pt, % space after the content
+    innerrightmargin=10pt, % space to the right of the content
+    innerleftmargin=10pt, % space to the left of the content
+    splittopskip=\topskip, % space at the top of the split frame
+}
+
+% Define the style for the TODO frame
+\mdfdefinestyle{todo}{
+    backgroundcolor=yellow!20, % light yellow background
+    linewidth=1pt, % border size
+    linecolor=yellow!70, % border color
+    innertopmargin=10pt, % space before the content
+    innerbottommargin=10pt, % space after the content
+    innerrightmargin=10pt, % space to the right of the content
+    innerleftmargin=10pt, % space to the left of the content
+    splittopskip=\topskip, % space at the top of the split frame
+    fontcolor=black, % text color
+    font=\small\itshape % font style (small italic)
+}
+
+\mdfdefinestyle{funfact}{
+    backgroundcolor=orange!5, % softer orange background for better readability
+    linewidth=2pt, % defined border to make it stand out
+    linecolor=orange!80, % darker orange for the border for contrast
+    innertopmargin=12pt, % space before the content
+    innerbottommargin=12pt, % space after the content
+    innerrightmargin=10pt, % space to the right of the content
+    innerleftmargin=10pt, % space to the left of the content
+    splittopskip=\topskip, % space at the top of the split frame
+    fontcolor=black, % black text for better readability
+    font=\small\bfseries, % small bold font for clarity
+    roundcorner=5pt, % rounded corners for a friendly look
+    shadow=true, % subtle shadow for depth
+    shadowsize=2pt, % size of the shadow
+    shadowcolor=gray!50 % color of the shadow for a subtle effect
+}
+
+\newcommand{\dynamiccolumntable}[3]{%
+    \begin{center} % <-- Center the table
+    \captionsetup{justification=centering}
+    \begin{tabularx}{\textwidth}{|#2|}
+    \hline
+    #1 \\
+    \hline
+    \end{tabularx}
+    \captionof{table}{#3}
+    \end{center}
+}
+
+\newcommand{\documentquality}[1]{\textbf{Quality:} #1}
+
+% Redefine the paragraph command to mimic subsection
+\titleformat{\paragraph}
+  {\normalfont\large\bfseries}{\theparagraph}{1em}{}
+\titlespacing*{\paragraph}
+  {0pt}{3.25ex plus 1ex minus .2ex}{1.5ex plus .2ex}
+
+\title{\textbf{\Huge TEMPLATE_COURSE_NAME Notes:} \\ \textbf{\Huge TEMPLATE_MODULE_NAME \\ \textbf{\LARGE TEMPLATE_LESSON_CODE}}}
+\author{\Large Matias Vizcaino}
+\date{\Large 25 January 2024}
+
+\begin{document}
+\setcounter{tocdepth}{5}
+
+% Command to add a horizontal rule after the paragraph title
+\newcommand{\paragraphWithLine}[1]{\paragraph{#1}\mbox{}\hrule\smallskip}
+
+\maketitle
+\documentquality{DRAFT}
+\tableofcontents
+\newpage

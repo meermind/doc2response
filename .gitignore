@@ -1,0 +1,15 @@
+.vscode
+.python-version
+.env
+__pycache__
+poetry.lock
+
+# Prompts
+prompts
+
+# Temporary files
+test_data
+storage
+
+# Outputs
+assistant_latex
