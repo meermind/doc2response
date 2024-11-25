@@ -95,6 +95,6 @@ def transcripts_to_docs(transcript_path: str, metadata_file: str):
 
     return documents
 
-if __name__ == "__main__":
-    # Define paths to be used (can be configured or passed as arguments)
-    documents = transcripts_to_docs(TRANSCRIPT_PATH, METADATA_FILE)
+# if __name__ == "__main__":
+#     # Define paths to be used (can be configured or passed as arguments)
+#     documents = transcripts_to_docs(TRANSCRIPT_PATH, METADATA_FILE)
