@@ -13,6 +13,7 @@ faiss-cpu = "^1.9.0"
 python-dotenv = "^1.0.1"
 pymysql = "^1.1.1"
 llama-index-vector-stores-tidbvector = "^0.2.0"
+pypdf2 = "^3.0.1"
 
 
 [build-system]

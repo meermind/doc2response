@@ -1,22 +1,17 @@
+import argparse
 import os
-import re
 import json
-
-from dotenv import load_dotenv
-load_dotenv()  # This will load the variables from the .env file
-
-COURSE = os.environ['COURSE']
-MODULE = os.environ['MODULE']
-MODULE_NAME = os.environ['MODULE_NAME']
-SECTION_NAME = os.environ['SECTION_NAME']
 
 # Utility function to sort sections/subsections by their order
 def sort_by_order(item):
     return item['order']
 
-def execute(module):
+def execute(course, module, module_name):
+    """
+    Main function to generate a LaTeX document for a given module.
+    """
     # Load metadata.json to get the order of sections/subsections
-    metadata_path = f"assistant_latex/{COURSE}/{MODULE_NAME}/metadata.json"
+    metadata_path = f"assistant_latex/{course}/{module_name}/metadata.json"
     with open(metadata_path, 'r') as file:
         metadata = json.load(file)
 
@@ -24,13 +19,13 @@ def execute(module):
     sorted_sections = sorted(metadata['sections'], key=sort_by_order)
 
     # Read the start text
-    with open(os.path.join('latex_merger', 'start.txt'), 'r') as file:
+    with open(os.path.join('src/latex_merger', 'start.txt'), 'r') as file:
         start_text = file.read()
 
     # Replace placeholders in the start text
     replace_dict = {
-        'TEMPLATE_COURSE_NAME': COURSE,
-        'TEMPLATE_MODULE_NAME': MODULE_NAME,
+        'TEMPLATE_COURSE_NAME': course,
+        'TEMPLATE_MODULE_NAME': module_name,
         'TEMPLATE_LESSON_CODE': module
     }
     for key, value in replace_dict.items():
@@ -52,8 +47,8 @@ def execute(module):
     latex_content += '\\end{document}\n'
 
     # Define the output path
-    save_path = os.path.join('../tmp_latex_docs', COURSE, 'Lecture Notes', module)
-    designer_folder = '-'.join([SECTION_NAME])
+    save_path = os.path.join('../tmp_latex_docs', course, 'Lecture Notes', module)
+    designer_folder = '-'.join([module_name])
     output_filepath = os.path.join(save_path, designer_folder, f"{designer_folder}.tex")
 
     # Check if the output file already exists
@@ -71,5 +66,26 @@ def execute(module):
 
     print(f"LaTeX document successfully generated at: {output_filepath}")
 
+def main():
+    """
+    Entry point for the script, allowing command-line arguments.
+    """
+    parser = argparse.ArgumentParser(description="Generate a LaTeX document for a specific module.")
+    parser.add_argument("--course", required=True, help="Course to process.")
+    parser.add_argument("--module", required=True, help="Module code to process.")
+    parser.add_argument("--module_name", required=True, help="Module name to process.")
+    args = parser.parse_args()
+
+    # Execute the function with the passed module
+    execute(args.course, args.module, args.module_name)
+
 if __name__ == '__main__':
-    execute(MODULE)
+    # Mock MODULE_NAME for debugging
+    # DEBUG_COURSE = "CM2025 Computer Security"
+    # DEBUG_MODULE = "Topic 1"
+    # DEBUG_MODULE_NAME = "Topic 1 Malware analysis"
+
+    # Call the execute function directly with the mocked MODULE_NAME
+    # execute(DEBUG_COURSE, DEBUG_MODULE, DEBUG_MODULE_NAME)
+    main()
+
