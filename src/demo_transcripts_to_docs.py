@@ -9,8 +9,8 @@ from collections import defaultdict
 from dotenv import load_dotenv
 load_dotenv()  # This will load the variables from the .env file
 
-TRANSCRIPT_PATH = os.environ['TRANSCRIPT_PATH']
-METADATA_FILE = os.environ['METADATA_FILE']
+# TRANSCRIPT_PATH = os.environ['TRANSCRIPT_PATH']
+# METADATA_FILE = os.environ['METADATA_FILE']
 
 def load_metadata(metadata_file: str) -> dict:
     """Load metadata from a JSON file."""

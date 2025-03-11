@@ -4,6 +4,7 @@
 .env
 __pycache__
 poetry.lock
+dist
 
 # Prompts
 prompts

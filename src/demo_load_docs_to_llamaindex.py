@@ -2,7 +2,8 @@ import argparse
 import logging
 import os
 import sys
-from sqlalchemy import URL
+from sqlalchemy import URL, create_engine, text
+from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
 from llama_index.vector_stores.tidbvector import TiDBVectorStore
 from llama_index.core import (
@@ -18,6 +19,46 @@ logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
+
+def get_db_session(connection_url):
+    """Creates a SQLAlchemy session for TiDB."""
+    engine = create_engine(connection_url)
+    Session = sessionmaker(bind=engine)
+    return Session()
+
+def check_module_exists(session, table_name, module_name):
+    """
+    Checks if a module_name already exists in the database using SQLAlchemy.
+
+    :param session: SQLAlchemy session.
+    :param table_name: The name of the vector table.
+    :param module_name: The module name to check.
+    :return: True if the module exists, False otherwise.
+    """
+    query = text(f"""
+        SELECT COUNT(*) as count
+        FROM {table_name}
+        WHERE JSON_UNQUOTE(JSON_EXTRACT(CAST(`meta` AS JSON), '$.module_name')) = :module_name;
+    """)
+    result = session.execute(query, {"module_name": module_name}).scalar()
+    return result > 0  # True if module exists
+
+
+def delete_module_records(session, table_name, module_name):
+    """
+    Deletes all records from the database where the module_name matches using SQLAlchemy.
+
+    :param session: SQLAlchemy session.
+    :param table_name: The name of the vector table.
+    :param module_name: The module name to delete.
+    """
+    query = text(f"""
+        DELETE FROM {table_name}
+        WHERE JSON_UNQUOTE(JSON_EXTRACT(CAST(`meta` AS JSON), '$.module_name')) = :module_name;
+    """)
+    session.execute(query, {"module_name": module_name})
+    session.commit()
+    logger.info(f"Deleted existing records for module: {module_name}")
 
 def main(transcript_path=None, metadata_file=None):
     # Parse command-line arguments
@@ -47,6 +88,13 @@ def main(transcript_path=None, metadata_file=None):
     # Load documents
     documents = transcripts_to_docs(args.transcript_path, args.metadata_file)
 
+    # Extract module_name from documents
+    if not documents or "module_name" not in documents[0].metadata:
+        logger.error("Error: Could not extract module_name from documents.")
+        sys.exit(1)
+
+    module_name = documents[0].metadata["module_name"]
+
     # Define dimensions for embeddings (e.g., OpenAI ada embeddings: 1536)
     embedding_model = OpenAIEmbedding(model="text-embedding-ada-002")
     embedding_dimension = 1536
@@ -70,6 +118,22 @@ def main(transcript_path=None, metadata_file=None):
         vector_dimension=embedding_dimension,
         drop_existing_table=False,
     )
+
+    # Create SQLAlchemy session
+    session = get_db_session(tidb_connection_url)
+
+    # **Check if module exists before proceeding**
+    if check_module_exists(session, vector_table_name, module_name):
+        user_input = input(f"Module '{module_name}' already exists. Do you want to overwrite it? (yes/no): ").strip().lower()
+        if user_input not in ["y", "yes"]:
+            print(f"Skipping processing for '{module_name}'.")
+            session.close()
+            sys.exit(0)  # Exit without processing
+
+        # **Delete existing records before inserting new ones**
+        delete_module_records(session, vector_table_name, module_name)
+
+    session.close()  # Close SQLAlchemy session after database checks
 
     # Create storage context
     storage_context = StorageContext.from_defaults(vector_store=vector_store)

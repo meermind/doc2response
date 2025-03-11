@@ -5,6 +5,9 @@ description = ""
 authors = ["datagero <datagero@outlook.com>"]
 readme = "README.md"
 
+# Tell Poetry NOT to look for a package
+packages = []
+
 [tool.poetry.dependencies]
 python = "^3.11"
 llama-index = "^0.11.20"
