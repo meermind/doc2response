@@ -39,43 +39,38 @@ def extract_topic_data(metadata_file, topic_number):
     return filtered_data  # Returns a list (even if only one match is found)
 
 # Define pipeline functions
-def run_load_docs(metadata_file, topic_number):
+def run_load_docs(metadata_file, topic_number, project_dir=".."):
     """
-    Run the document loading pipeline.
+    Run the document loading pipeline by calling the module directly.
     """
-    print("Running: demo_load_docs_to_llamaindex.py")
-    args = [
-        sys.executable, "src/demo_load_docs_to_llamaindex.py",
-        "--metadata_file", metadata_file,
-        "--topic_number", str(topic_number),
-    ]
-    subprocess.run(args, check=True)
+    print("Running (direct): demo_load_docs_to_llamaindex.main")
+    from src.demo_load_docs_to_llamaindex import main as load_main
+    # Call programmatically to avoid subprocess; this still requires proper env/DB when enabled
+    load_main(metadata_file=metadata_file, topic_number=topic_number, project_dir=project_dir)
 
 def run_call_llamaindex(module_name):
     """
-    Run the LlamaIndex processing pipeline.
+    Run the LlamaIndex processing pipeline by calling the module directly.
     """
-    print("Running: demo_call_llamaindex.py")
-    subprocess.run([
-        sys.executable, "src/demo_call_llamaindex.py",
-        "--module_name", module_name
-    ], check=True)
+    print("Running (direct): demo_call_llamaindex.main")
+    from src.demo_call_llamaindex import main as call_main
+    call_main(args=["--module_name", module_name])
 
 def run_generate_latex(course, module, module_name):
     """
-    Run the LaTeX generation pipeline.
+    Run the LaTeX generation pipeline by calling the module directly.
     """
-    print("Running: generate_latex_doc.py")
-    subprocess.run([
-        sys.executable, "src/latex_merger/generate_latex_doc.py",
-        "--course", course,
-        "--module", module,
-        "--module_name", module_name
-    ], check=True)
+    print("Running (direct): latex_merger.generate_latex_doc.execute")
+    from src.latex_merger.generate_latex_doc import execute
+    execute(course, module, module_name)
 
-def orchestrate_pipeline(run_load=True, run_call=True, run_generate=True):
+def orchestrate_pipeline(run_load=True, run_call=True, run_generate=True, metadata_file=None, topic_number=None):
     """
     Orchestrate the pipeline based on the provided flags.
+
+    Parameters may be provided directly or via environment variables:
+    - metadata_file: path to metadata JSON (env: METADATA_FILE)
+    - topic_number: 1-based topic/module index (env: TOPIC_NUMBER)
     """
     # metadata_file = "../course-crawler/crawled_metadata/dl_coursera/uol-cm2025-computer-security.json"
     # transcript_path = "test_data/01@topic-1-introduction-to-computer-securit"
@@ -145,8 +140,12 @@ def orchestrate_pipeline(run_load=True, run_call=True, run_generate=True):
     # module_name = "Topic01 Privacy Preserving Ai"
 
     # Example usage
-    metadata_path = "/Users/matias.vizcaino/Documents/datagero_repos/meermind/course-crawler/crawled_metadata/gatech/simulation.json"
-    topic = 1
+    # Resolve inputs from args/env with sensible defaults for local debugging
+    metadata_path = metadata_file or os.getenv(
+        "METADATA_FILE",
+        "/Users/matias.vizcaino/Documents/datagero_repos/meermind/course-crawler/crawled_metadata/gatech/simulation.json",
+    )
+    topic = int(topic_number or os.getenv("TOPIC_NUMBER", "1"))
     topic_data = extract_topic_data(metadata_path, topic)
 
     for topic in topic_data:

@@ -46,8 +46,9 @@ def execute(course, module, module_name):
     # Add the end document tag
     latex_content += '\\end{document}\n'
 
-    # Define the output path
-    save_path = os.path.join('../tmp_latex_docs', course, 'Lecture Notes', module)
+    # Define the output path (allow override via env for tests)
+    base_out = os.getenv('D2R_OUTPUT_BASE', '../tmp_latex_docs')
+    save_path = os.path.join(base_out, course, 'Lecture Notes', module)
     designer_folder = '-'.join([module_name])
     output_filepath = os.path.join(save_path, designer_folder, f"{designer_folder}.tex")
 
