@@ -1,22 +1,46 @@
 import argparse
 import os
 import json
+from src.logger import configure_logging, get_logger
+from src.models.latex import LatexMetadata, SectionRef, SectionContent
+from src.models.paths import OutputPaths
 
 # Utility function to sort sections/subsections by their order
 def sort_by_order(item):
     return item['order']
 
-def execute(course, module, module_name):
+def execute(course, module, module_name, input_base_dir=None, overwrite: bool | None = None):
     """
     Main function to generate a LaTeX document for a given module.
     """
+    # Allow tests to control where metadata is read from via env
+    if input_base_dir is None:
+        input_base_dir = os.getenv("INPUT_BASE_DIR", "assistant_latex")
     # Load metadata.json to get the order of sections/subsections
-    metadata_path = f"assistant_latex/{course}/{module_name}/metadata.json"
+    metadata_path = os.path.join(input_base_dir, course, module_name, "metadata.json")
+    configure_logging()
+    log = get_logger(__name__)
+    log.info(f"[green]Merging[/] course={course} module={module} module_name={module_name}")
     with open(metadata_path, 'r') as file:
-        metadata = json.load(file)
+        raw_meta = json.load(file)
+
+    # Normalize section file paths to this module's base directory when relative/inconsistent
+    base_dir = os.path.join(input_base_dir, course, module_name)
+    for sec in raw_meta.get('sections', []):
+        p = sec.get('path')
+        if not p:
+            continue
+        if not os.path.isabs(p):
+            # if path already looks like assistant_latex/... but wrong course, force to current base with basename
+            sec['path'] = os.path.join(base_dir, os.path.basename(p))
+        else:
+            # absolute but not under base_dir; leave as-is
+            pass
+    # Validate metadata
+    metadata_model = LatexMetadata.model_validate(raw_meta)
 
     # Sort the sections and subsections by their order
-    sorted_sections = sorted(metadata['sections'], key=sort_by_order)
+    sorted_sections = sorted([s.model_dump() for s in metadata_model.sections], key=sort_by_order)
 
     # Read the start text
     with open(os.path.join('src/latex_merger', 'start.txt'), 'r') as file:
@@ -36,12 +60,126 @@ def execute(course, module, module_name):
 
     # Iterate through the sorted sections and append their content
     for section in sorted_sections:
-        print(f"Processing {section['type']}: {section['title']}")
+        log.info(f"[cyan]Processing[/] {section['type']}: {section['title']}")
 
         with open(section['path'], 'r') as file:
             content = file.read()
+        # Validate each section's content; self-heal known issues
+        try:
+            SectionContent(ref=SectionRef(**section), text=content)
+            healed = content
+        except Exception as e:
+            # Self-heal minimal cases: wrap common math macros outside math, and ensure environments are closed
+            healed = content
+            # wrap math-only macros not already in math; and line-level wrapping when needed
+            try:
+                import re as _re
+                macros = r"operatorname|mathbb|mathcal|frac|sum|int|lim|sqrt|hat"
+                def _wrap_inline(s: str) -> str:
+                    return _re.sub(r"(?<![\$\\])\\operatorname\{([^}]+)\}", r"\\(\\operatorname{\1}\\)", s)
+                def _wrap_lines(s: str) -> str:
+                    out = []
+                    for line in s.splitlines():
+                        if (not any(md in line for md in ("$", "\\(", "\\["))) and _re.search(r"\\(" + macros + r")(\\b|\\{)", line):
+                            out.append(f"\\({line}\\)")
+                        else:
+                            out.append(line)
+                    return "\n".join(out)
+                healed = _wrap_inline(_wrap_lines(healed))
 
-        latex_content += content + '\n\n'
+                # Heuristic for lonely \item: wrap consecutive \item lines not inside a list env
+                def _wrap_lonely_items(s: str) -> str:
+                    lines = s.splitlines()
+                    env_stack = []
+                    begin_re = _re.compile(r"^\\begin\{([^}]+)\}")
+                    end_re = _re.compile(r"^\\end\{([^}]+)\}")
+                    def in_list_env() -> bool:
+                        return any(env in ("itemize", "enumerate", "description") for env in env_stack)
+                    out = []
+                    i = 0
+                    while i < len(lines):
+                        m_b = begin_re.match(lines[i])
+                        m_e = end_re.match(lines[i])
+                        if m_b:
+                            env_stack.append(m_b.group(1))
+                            out.append(lines[i])
+                            i += 1
+                            continue
+                        if m_e:
+                            if env_stack and env_stack[-1] == m_e.group(1):
+                                env_stack.pop()
+                            out.append(lines[i])
+                            i += 1
+                            continue
+                        if not in_list_env() and lines[i].lstrip().startswith("\\item"):
+                            # start collecting consecutive item lines
+                            block = []
+                            while i < len(lines) and lines[i].lstrip().startswith("\\item"):
+                                block.append(lines[i])
+                                i += 1
+                            out.append("\\begin{itemize}")
+                            out.extend(block)
+                            out.append("\\end{itemize}")
+                            continue
+                        out.append(lines[i])
+                        i += 1
+                    return "\n".join(out)
+                healed = _wrap_lonely_items(healed)
+
+                # Escape underscores outside math on lines without math delimiters
+                def _escape_underscores(s: str) -> str:
+                    esc = []
+                    for line in s.splitlines():
+                        if ("$" not in line) and ("\\(" not in line) and ("\\[" not in line):
+                            line = line.replace("_", "\\_")
+                        esc.append(line)
+                    return "\n".join(esc)
+                healed = _escape_underscores(healed)
+            except Exception:
+                pass
+            # Additional sanitization: unicode math, mdframed tags, missing headings, and code fences
+            try:
+                import re as _re
+                def _sanitize_unicode(s: str) -> str:
+                    rep = {
+                        "π": "\\pi",
+                        "−": "-",
+                        "μ": "\\mu",
+                        "σ": "\\sigma",
+                        "ρ": "\\rho",
+                        "≈": "\\approx",
+                        "≤": "\\leq",
+                        "≥": "\\geq",
+                        "∑": "\\sum",
+                        "∫": "\\int",
+                        "∈": "\\in",
+                        "√": "\\sqrt{}",
+                    }
+                    for k, v in rep.items():
+                        s = s.replace(k, v)
+                    return s
+                healed = _sanitize_unicode(healed)
+                # Convert accidental html-like mdframed tags
+                healed = healed.replace("<mdframed>", "\\begin{mdframed}").replace("</mdframed>", "\\end{mdframed}")
+                # Strip accidental code fences
+                healed = _re.sub(r"```+\\s*latex|```+", "", healed)
+                # Prepend missing heading if needed
+                if section['type'] == 'subsection' and "\\subsection" not in healed:
+                    healed = f"\\subsection{{{section['title']}}}\n" + healed
+                if section['type'] == 'section' and "\\section" not in healed:
+                    healed = f"\\section{{{section['title']}}}\n" + healed
+            except Exception:
+                pass
+            # Try validation again; if still failing, drop a .err.txt and continue
+            try:
+                SectionContent(ref=SectionRef(**section), text=healed)
+            except Exception as e2:
+                err_path = section['path'] + '.err.txt'
+                with open(err_path, 'w') as ef:
+                    ef.write(str(e2))
+                log.warning(f"Validation failed for {section['title']} -> wrote error: {err_path}")
+        
+        latex_content += healed + '\n\n'
 
     # Add the end document tag
     latex_content += '\\end{document}\n'
@@ -53,11 +191,14 @@ def execute(course, module, module_name):
     output_filepath = os.path.join(save_path, designer_folder, f"{designer_folder}.tex")
 
     # Check if the output file already exists
+    if overwrite is None:
+        overwrite = bool(os.getenv('D2R_OVERWRITE', '0') == '1')
     if os.path.exists(output_filepath):
-        overwrite = input(f"File {output_filepath} already exists. Do you want to overwrite? (y/n): ")
-        if overwrite.lower() != 'y':
-            print("Operation cancelled.")
-            return
+        if not overwrite:
+            ans = input(f"File {output_filepath} already exists. Do you want to overwrite? (y/n): ")
+            if ans.lower() != 'y':
+                print("Operation cancelled.")
+                return
 
     # Create necessary directories and save the concatenated LaTeX content
     os.makedirs(os.path.join(save_path, designer_folder), exist_ok=True)
@@ -65,7 +206,7 @@ def execute(course, module, module_name):
     with open(output_filepath, 'w') as file:
         file.write(latex_content)
 
-    print(f"LaTeX document successfully generated at: {output_filepath}")
+    log.info(f"[bold green]LaTeX generated[/]: {output_filepath}")
 
 def main():
     """
@@ -75,10 +216,15 @@ def main():
     parser.add_argument("--course", required=True, help="Course to process.")
     parser.add_argument("--module", required=True, help="Module code to process.")
     parser.add_argument("--module_name", required=True, help="Module name to process.")
+    parser.add_argument(
+        "--input_base_dir",
+        default=os.getenv("INPUT_BASE_DIR", "assistant_latex"),
+        help="Base directory where the writer saved outputs (default: assistant_latex or $INPUT_BASE_DIR)",
+    )
     args = parser.parse_args()
 
     # Execute the function with the passed module
-    execute(args.course, args.module, args.module_name)
+    execute(args.course, args.module, args.module_name, input_base_dir=args.input_base_dir)
 
 if __name__ == '__main__':
     # Mock MODULE_NAME for debugging

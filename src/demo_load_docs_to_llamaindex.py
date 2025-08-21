@@ -5,6 +5,7 @@ import sys
 from sqlalchemy import URL, create_engine, text
 from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
+from src.logger import configure_logging, get_logger
 from llama_index.vector_stores.tidbvector import TiDBVectorStore
 from llama_index.core import (
     VectorStoreIndex,
@@ -19,6 +20,8 @@ logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
+configure_logging()
+logger = logging.getLogger(__name__)
 
 import os
 if os.getenv("ENABLE_CHILD_DEBUG") == "1":
@@ -76,13 +79,14 @@ def _resolve_path(path: str, base_dir: str) -> str:
     return candidate
 
 
-def main(metadata_file=None, topic_number=None, project_dir=None):
+def main(metadata_file=None, topic_number=None, project_dir=None, overwrite: bool | None = None):
     # Parse command-line arguments
     parser = argparse.ArgumentParser(description="Load documents into TiDB VectorStore for LlamaIndex.")
     parser.add_argument("--metadata_file", required=False, help="Path to the metadata file (absolute or relative to --project_dir).")
     parser.add_argument("--topic_number", type=int, required=False, help="Module index (1-based) to process.")
     parser.add_argument("--project_dir", default="..", help="Base directory for resolving relative metadata/content paths.")
     parser.add_argument("--persist_dir", default="./storage", help="Directory to save index metadata.")
+    parser.add_argument("--overwrite", action="store_true", help="If set, overwrite existing module data without prompting.")
 
     # Parse args but allow running without CLI by using defaults/env
     args = parser.parse_args(args=None if sys.argv[0].endswith("demo_load_docs_to_llamaindex.py") else [])
@@ -91,6 +95,8 @@ def main(metadata_file=None, topic_number=None, project_dir=None):
     metadata_file = metadata_file or args.metadata_file or os.getenv("METADATA_FILE")
     topic_number = int(topic_number or args.topic_number or os.getenv("TOPIC_NUMBER", "0"))
     project_dir = project_dir or args.project_dir or os.getenv("PROJECT_DIR", "../course-crawler")
+    if overwrite is None:
+        overwrite = bool(args.overwrite or os.getenv("D2R_OVERWRITE", "0") == "1")
 
     if not metadata_file or topic_number < 1:
         logger.error("metadata_file and topic_number are required. Provide CLI args, function params, or set METADATA_FILE/TOPIC_NUMBER env.")
@@ -122,7 +128,7 @@ def main(metadata_file=None, topic_number=None, project_dir=None):
     module_name = documents[0].metadata["module_name"]
 
     # Define dimensions for embeddings (e.g., OpenAI ada embeddings: 1536)
-    embedding_model = OpenAIEmbedding(model="text-embedding-ada-002")
+    embedding_model = OpenAIEmbedding(model="text-embedding-3-small")
     embedding_dimension = 1536
 
     # TiDB connection URL
@@ -150,14 +156,15 @@ def main(metadata_file=None, topic_number=None, project_dir=None):
 
     # **Check if module exists before proceeding**
     if check_module_exists(session, vector_table_name, module_name):
-        user_input = input(f"Module '{module_name}' already exists. Do you want to overwrite it? (yes/no): ").strip().lower()
-        if user_input not in ["y", "yes"]:
-            print(f"Skipping processing for '{module_name}'.")
-            session.close()
-            sys.exit(0)  # Exit without processing
-
-        # **Delete existing records before inserting new ones**
-        delete_module_records(session, vector_table_name, module_name)
+        if overwrite:
+            delete_module_records(session, vector_table_name, module_name)
+        else:
+            user_input = input(f"Module '{module_name}' already exists. Do you want to overwrite it? (yes/no): ").strip().lower()
+            if user_input not in ["y", "yes"]:
+                print(f"Skipping processing for '{module_name}'.")
+                session.close()
+                sys.exit(0)  # Exit without processing
+            delete_module_records(session, vector_table_name, module_name)
 
     session.close()  # Close SQLAlchemy session after database checks
 

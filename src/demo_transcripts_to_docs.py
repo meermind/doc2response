@@ -5,9 +5,14 @@ import json
 from pathlib import Path
 from llama_index.core import Document
 from collections import defaultdict
+import logging
 
 from dotenv import load_dotenv
+from src.logger import configure_logging, get_logger
+from src.models.metadata import load_course_metadata
 load_dotenv()  # This will load the variables from the .env file
+configure_logging()
+log = logging.getLogger(__name__)
 
 # TRANSCRIPT_PATH = os.environ['TRANSCRIPT_PATH']
 # METADATA_FILE = os.environ['METADATA_FILE']
@@ -20,137 +25,83 @@ def _resolve_path(path: str, base_dir: str) -> str:
     return os.path.join(base_dir, path)
 
 
-def load_metadata(metadata_file: str) -> dict:
-    """Load metadata from a JSON file."""
-    try:
-        with open(metadata_file, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except FileNotFoundError:
-        print(f"Metadata file not found: {metadata_file}")
-        return {}
+def _read_text_file(p: str) -> str:
+    with open(p, 'r', encoding='utf-8') as f:
+        return f.read()
 
-def load_module_content_paths(metadata: dict, topic_number: int) -> dict:
-    """Extract content paths for a given module index (1-based)."""
-    modules = metadata.get("modules", [])
-    if topic_number < 1 or topic_number > len(modules):
-        return {}
+def _make_document(text: str, meta: dict) -> Document:
+    return Document(text=text, metadata=meta)
 
-    module = modules[topic_number - 1]
-
-    content = {
-        "transcripts": [],
-        "slides": [],
-        "extra_notes": [],
-    }
-
-    for lesson in module.get("lessons", []):
-        for item in lesson.get("items", []):
-            for c in item.get("content", []):
-                ctype = c.get("content_type")
-                cpath = c.get("path")
-                if not ctype or not cpath:
-                    continue
-                if ctype == "transcript" and cpath.endswith(".txt"):
-                    content["transcripts"].append(cpath)
-                elif ctype == "slides" and cpath.endswith(".pdf"):
-                    content["slides"].append(cpath)
-                elif ctype == "extra-notes" and cpath.endswith(".md"):
-                    content["extra_notes"].append(cpath)
-
-    return content
-
-def create_documents_with_metadata(metadata: dict, module_index: int) -> list:
-    """Create Document objects enriched with metadata for a single module using paths from metadata."""
+def _create_documents_from_course(course, module_index: int) -> list:
     documents = []
-
-    def get_parent_dir(file_path: str) -> str:
-        """Extract the parent directory path."""
-        return os.path.dirname(file_path)
-
-    modules = metadata.get("modules", [])
-    if module_index < 1 or module_index > len(modules):
-        return documents
-
-    module = modules[module_index - 1]
-    module_name = module["module_name"]
-    module_slug = module["module_slug"]
-
-    for lesson in module.get("lessons", []):
-        lesson_name = lesson["lesson_name"]
-        lesson_slug = lesson["lesson_slug"]
-
-        for item in lesson.get("items", []):
-            item_name = item["name"]
-            item_slug = item["transformed_slug"]
-
-            # Inline transcripts directly from content path
-            for content in item.get("content", []):
-                ctype = content.get("content_type")
-                cpath = content.get("path")
-                if ctype == "transcript" and cpath and cpath.endswith(".txt"):
-                    with open(cpath, 'r', encoding='utf-8') as f:
-                        content_text = f.read()
-
-                    document = Document(
-                        text=content_text,
-                        metadata={
-                            "course_name": metadata.get("course_name", ""),
-                            "course_slug": metadata.get("course_slug", ""),
-                            "module_name": module_name,
-                            "module_slug": module_slug,
-                            "lesson_name": lesson_name,
-                            "lesson_slug": lesson_slug,
-                            "item_name": item_name,
-                            "item_slug": item_slug,
-                            "transcript_file": cpath,
-                        }
-                    )
-                    documents.append(document)
-
-            # Also create lightweight reference docs for slides and extra notes paths
-            slide_paths = [c["path"] for c in item.get("content", []) if c.get("content_type") == "slides"]
-            note_paths = [c["path"] for c in item.get("content", []) if c.get("content_type") == "extra-notes"]
-            for spath in slide_paths:
-                documents.append(Document(text="", metadata={
-                    "type": "slides_ref",
-                    "path": spath,
-                    "course_slug": metadata.get("course_slug", ""),
-                    "module_slug": module_slug,
-                    "lesson_slug": lesson_slug,
-                    "item_slug": item_slug,
-                }))
-            for npath in note_paths:
-                documents.append(Document(text="", metadata={
-                    "type": "extra_notes_ref",
-                    "path": npath,
-                    "course_slug": metadata.get("course_slug", ""),
-                    "module_slug": module_slug,
-                    "lesson_slug": lesson_slug,
-                    "item_slug": item_slug,
-                }))
+    module = course.select_module_by_index(module_index)
+    for lesson in module.lessons:
+        for item in lesson.items:
+            # transcripts
+            for c in item.content:
+                if c.content_type == "transcript" and c.path and c.path.endswith('.txt'):
+                    try:
+                        text = _read_text_file(c.path)
+                    except Exception:
+                        text = ""
+                    documents.append(_make_document(text, {
+                        "course_name": course.course_name,
+                        "course_slug": course.course_slug,
+                        "module_name": module.module_name,
+                        "module_slug": module.module_slug,
+                        "lesson_name": lesson.lesson_name,
+                        "lesson_slug": lesson.lesson_slug,
+                        "item_name": item.name,
+                        "item_slug": item.transformed_slug,
+                        "transcript_file": c.path,
+                    }))
+            # lightweight refs
+            for c in item.content:
+                if c.content_type == "slides" and c.path:
+                    documents.append(_make_document("", {
+                        "type": "slides_ref",
+                        "path": c.path,
+                        "course_slug": course.course_slug,
+                        "module_slug": module.module_slug,
+                        "lesson_slug": lesson.lesson_slug,
+                        "item_slug": item.transformed_slug,
+                    }))
+                if c.content_type == "extra-notes" and c.path:
+                    documents.append(_make_document("", {
+                        "type": "extra_notes_ref",
+                        "path": c.path,
+                        "course_slug": course.course_slug,
+                        "module_slug": module.module_slug,
+                        "lesson_slug": lesson.lesson_slug,
+                        "item_slug": item.transformed_slug,
+                    }))
     return documents
 
 def transcripts_to_docs(transcript_path: str, metadata_file: str, topic_number: int, project_dir: str = ".."):
-    """Generate documents for a module using content paths embedded in metadata.
+    """Generate documents for a module using pydantic metadata models.
 
     project_dir is used to resolve relative content paths from metadata, if needed.
     """
-    metadata = load_metadata(metadata_file)
+    course = load_course_metadata(metadata_file, project_dir)
+    documents = _create_documents_from_course(course, topic_number)
 
-    # Normalize paths in metadata to absolute or project-relative for robustness
-    for module in metadata.get("modules", []):
-        for lesson in module.get("lessons", []):
-            for item in lesson.get("items", []):
-                for c in item.get("content", []):
-                    p = c.get("path")
-                    if p:
-                        c["path"] = _resolve_path(p, project_dir)
-
-    documents = create_documents_with_metadata(metadata, topic_number)
-
-    print(f"Created {len(documents)} documents.")
-    for doc in documents[:5]:
-        print(f"Content: {doc.text[:50]}... | Metadata: {doc.metadata}")
+    log.info("Created %d documents for module_index=%s", len(documents), topic_number)
+    # Log only metadata keys, never text content; one JSON object per line
+    try:
+        import json as _json
+        log.info("Sample docs (metadata only):")
+        for d in documents:
+            md = d.metadata or {}
+            line = {
+                "course_slug": md.get("course_slug", ""),
+                "module_slug": md.get("module_slug", ""),
+                "lesson_slug": md.get("lesson_slug", ""),
+                "item_slug": md.get("item_slug", ""),
+                "has_text": bool(d.text),
+            }
+            log.info(_json.dumps(line))
+    except Exception:
+        pass
 
     return documents
 

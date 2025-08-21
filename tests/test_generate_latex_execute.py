@@ -10,11 +10,13 @@ def test_generate_latex_execute_with_prebuilt_metadata(monkeypatch, request):
     if str(project_dir) not in sys.path:
         sys.path.insert(0, str(project_dir))
 
-    # Create assistant_latex structure and files
+    # Configure output and input bases under tests/outputs to avoid assistant_latex writes
     course = "Test Course"
     module = "Topic 1"
     module_name = "Topic 1 Unit"
-    base = project_dir / "assistant_latex" / course / module_name
+    outputs_base = project_dir / "tests" / "outputs" / request.node.name
+    outputs_base.mkdir(parents=True, exist_ok=True)
+    base = outputs_base / course / module_name
     base.mkdir(parents=True, exist_ok=True)
 
     section_path = base / "Intro.tex"
@@ -33,10 +35,9 @@ def test_generate_latex_execute_with_prebuilt_metadata(monkeypatch, request):
     # Avoid interactive overwrite prompt
     monkeypatch.setattr("builtins.input", lambda *_a, **_k: "y")
 
-    # Route outputs to tests/outputs/<testname>
-    outputs_base = project_dir / "tests" / "outputs" / request.node.name
-    outputs_base.mkdir(parents=True, exist_ok=True)
+    # Route outputs and inputs to tests/outputs/<testname>
     monkeypatch.setenv("D2R_OUTPUT_BASE", str(outputs_base))
+    monkeypatch.setenv("INPUT_BASE_DIR", str(outputs_base))
 
     # Act
     from src.latex_merger.generate_latex_doc import execute

@@ -1,0 +1,34 @@
+{
+    "sections": [
+        {
+            "order": 0,
+            "type": "section",
+            "title": "Simulation Course Overview",
+            "path": "assistant_latex/Simulation/Whirlwind Tour Of Simulation/Simulation Course Overview.tex"
+        },
+        {
+            "order": 1,
+            "type": "subsection",
+            "title": "Course Introduction",
+            "path": "assistant_latex/Simulation/Whirlwind Tour Of Simulation/Course Introduction.tex"
+        },
+        {
+            "order": 2,
+            "type": "subsection",
+            "title": "Simulation Methodologies",
+            "path": "assistant_latex/Simulation/Whirlwind Tour Of Simulation/Simulation Methodologies.tex"
+        },
+        {
+            "order": 3,
+            "type": "subsection",
+            "title": "Practical Examples and Applications",
+            "path": "assistant_latex/Simulation/Whirlwind Tour Of Simulation/Practical Examples and Applications.tex"
+        },
+        {
+            "order": 4,
+            "type": "subsection",
+            "title": "Evaluation and Future Directions",
+            "path": "assistant_latex/Simulation/Whirlwind Tour Of Simulation/Evaluation and Future Directions.tex"
+        }
+    ]
+}

@@ -33,7 +33,8 @@ def test_orchestrator_end_to_end(monkeypatch, request):
         return None
 
     def fake_generate_latex(course, module, module_name):
-        base = project_dir / "assistant_latex" / course / module_name
+        base_dir = Path(os.getenv("INPUT_BASE_DIR", project_dir / "assistant_latex"))
+        base = base_dir / course / module_name
         base.mkdir(parents=True, exist_ok=True)
         section_path = base / "Introduction.tex"
         subsection_path = base / "Motivation.tex"
@@ -59,6 +60,7 @@ def test_orchestrator_end_to_end(monkeypatch, request):
     outputs_base = project_dir / "tests" / "outputs" / request.node.name
     outputs_base.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("D2R_OUTPUT_BASE", str(outputs_base))
+    monkeypatch.setenv("INPUT_BASE_DIR", str(outputs_base))
 
     # Run with all steps; fakes avoid DB/LLM and synthesize outputs
     orchestrate_pipeline(
