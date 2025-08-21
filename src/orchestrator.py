@@ -20,36 +20,36 @@ def extract_topic_data(metadata_file, topic_number):
 
     course_name = data["course_name"]
     course_slug = data["course_slug"]
-    base_transcript_path = f"../course-crawler/outputs/structured_transcripts/dl_coursera/{course_slug}"
 
     filtered_data = []
 
-    for module in data["modules"]:
+    for i, module in enumerate(data["modules"]):
         module_name = module["module_name"]
-
-        if module_name.startswith(f"Topic {topic_number}"):
-            transcript_path = f"{base_transcript_path}/{module['module_slug']}"
+        if i + 1 == topic_number:
+            # We no longer compute a base transcript path; all paths come from metadata content entries
             filtered_data.append({
                 "metadata_file": metadata_file,
-                "transcript_path": transcript_path,
                 "course": course_name,
                 "module": f"Topic {topic_number}",
                 "module_name": module_name,
+                "module_index": topic_number,
+                "module_slug": module.get("module_slug", ""),
             })
 
     return filtered_data  # Returns a list (even if only one match is found)
 
 # Define pipeline functions
-def run_load_docs(transcript_path, metadata_file):
+def run_load_docs(metadata_file, topic_number):
     """
     Run the document loading pipeline.
     """
     print("Running: demo_load_docs_to_llamaindex.py")
-    subprocess.run([
+    args = [
         sys.executable, "src/demo_load_docs_to_llamaindex.py",
-        "--transcript_path", transcript_path,
-        "--metadata_file", metadata_file
-    ], check=True)
+        "--metadata_file", metadata_file,
+        "--topic_number", str(topic_number),
+    ]
+    subprocess.run(args, check=True)
 
 def run_call_llamaindex(module_name):
     """
@@ -145,24 +145,24 @@ def orchestrate_pipeline(run_load=True, run_call=True, run_generate=True):
     # module_name = "Topic01 Privacy Preserving Ai"
 
     # Example usage
-    metadata_path = "/Users/datagero/Documents/offline_repos/course-crawler/crawled_metadata/dl_coursera/uol-cm2025-computer-security.json"
-    topic = 7  # Example: Fetch data for "Topic 6"
+    metadata_path = "/Users/matias.vizcaino/Documents/datagero_repos/meermind/course-crawler/crawled_metadata/gatech/simulation.json"
+    topic = 1
     topic_data = extract_topic_data(metadata_path, topic)
 
     for topic in topic_data:
         metadata_file = topic["metadata_file"]
-        transcript_path = topic["transcript_path"]
         course = topic["course"]
         module = topic["module"]
         module_name = topic["module_name"]
+        module_index = topic["module_index"]
 
-        if not transcript_path or not metadata_file or not module_name:
-            print("Error: TRANSCRIPT_PATH, METADATA_FILE, and MODULE_NAME must be set in the .env file.")
+        if not metadata_file or not module_name:
+            print("Error: METADATA_FILE and MODULE_NAME must be set.")
             return
 
         try:
             if run_load:
-                run_load_docs(transcript_path, metadata_file)
+                run_load_docs(metadata_file, module_index)
             if run_call:
                 run_call_llamaindex(module_name)
             if run_generate:
@@ -172,7 +172,7 @@ def orchestrate_pipeline(run_load=True, run_call=True, run_generate=True):
 
 if __name__ == "__main__":
     # Example DAG execution: All steps
-    orchestrate_pipeline(run_load=True, run_call=True, run_generate=True)
+    orchestrate_pipeline(run_load=False, run_call=True, run_generate=True)
 
     # Uncomment for specific step execution
     # orchestrate_pipeline(run_load=False, run_call=True, run_generate=False)

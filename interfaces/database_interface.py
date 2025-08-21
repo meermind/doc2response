@@ -108,8 +108,6 @@ class DatabaseInterface:
             except Exception as e:
                 print(f"Failed to delete table: {e}")
 
-
-
 # Example Usage
 if __name__ == "__main__":
     mysql_interface = DatabaseInterface(db_type='tidb', db_name='test_creation', force_recreate_db=True)

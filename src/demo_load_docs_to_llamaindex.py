@@ -20,6 +20,12 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
+import os
+if os.getenv("ENABLE_CHILD_DEBUG") == "1":
+    import debugpy
+    debugpy.listen(("127.0.0.1", 5678))
+    debugpy.wait_for_client()
+
 def get_db_session(connection_url):
     """Creates a SQLAlchemy session for TiDB."""
     engine = create_engine(connection_url)
@@ -60,18 +66,38 @@ def delete_module_records(session, table_name, module_name):
     session.commit()
     logger.info(f"Deleted existing records for module: {module_name}")
 
-def main(transcript_path=None, metadata_file=None):
+def _resolve_path(path: str, base_dir: str) -> str:
+    """Resolve path against base_dir if not absolute and not existing as-is."""
+    if not path:
+        return path
+    if os.path.isabs(path) or os.path.exists(path):
+        return path
+    candidate = os.path.join(base_dir, path)
+    return candidate
+
+
+def main(metadata_file=None, topic_number=None, project_dir=None):
     # Parse command-line arguments
     parser = argparse.ArgumentParser(description="Load documents into TiDB VectorStore for LlamaIndex.")
-    parser.add_argument("--transcript_path", required=True, help="Path to the directory containing transcripts.")
-    parser.add_argument("--metadata_file", required=True, help="Path to the metadata file.")
+    parser.add_argument("--metadata_file", required=False, help="Path to the metadata file (absolute or relative to --project_dir).")
+    parser.add_argument("--topic_number", type=int, required=False, help="Module index (1-based) to process.")
+    parser.add_argument("--project_dir", default="..", help="Base directory for resolving relative metadata/content paths.")
     parser.add_argument("--persist_dir", default="./storage", help="Directory to save index metadata.")
 
-    args = parser.parse_args()
+    # Parse args but allow running without CLI by using defaults/env
+    args = parser.parse_args(args=None if sys.argv[0].endswith("demo_load_docs_to_llamaindex.py") else [])
 
-    # Allow overriding with function arguments for debugging
-    transcript_path = transcript_path or args.transcript_path
-    metadata_file = metadata_file or args.metadata_file
+    # Allow overriding with function arguments or env for debugging
+    metadata_file = metadata_file or args.metadata_file or os.getenv("METADATA_FILE")
+    topic_number = int(topic_number or args.topic_number or os.getenv("TOPIC_NUMBER", "0"))
+    project_dir = project_dir or args.project_dir or os.getenv("PROJECT_DIR", "../course-crawler")
+
+    if not metadata_file or topic_number < 1:
+        logger.error("metadata_file and topic_number are required. Provide CLI args, function params, or set METADATA_FILE/TOPIC_NUMBER env.")
+        sys.exit(1)
+
+    # Resolve metadata path relative to project_dir when needed
+    metadata_file = _resolve_path(metadata_file, project_dir)
 
     # Load settings from .env
     tidb_username = os.getenv("TIDB_USERNAME")
@@ -85,8 +111,8 @@ def main(transcript_path=None, metadata_file=None):
         logger.error("Missing required TiDB configuration in .env file.")
         sys.exit(1)
 
-    # Load documents
-    documents = transcripts_to_docs(args.transcript_path, args.metadata_file)
+    # Load documents for a specific module based on metadata content paths
+    documents = transcripts_to_docs(None, metadata_file, topic_number=topic_number, project_dir=project_dir)
 
     # Extract module_name from documents
     if not documents or "module_name" not in documents[0].metadata:
@@ -150,12 +176,12 @@ def main(transcript_path=None, metadata_file=None):
     logger.info("Index saved to disk at %s.", args.persist_dir)
 
 if __name__ == "__main__":
-    # # Mock entry point for debugging
-    # DEBUG_TRANSCRIPT_PATH = "test_data/02@topic-1-malware-analysis"
-    # DEBUG_METADATA_FILE = "../course-crawler/crawled_metadata/dl_coursera/uol-cm2025-computer-security.json"
+    # Local debugging defaults; can be overridden by env or CLI
+    DEBUG_METADATA_PATH = os.getenv(
+        "METADATA_FILE",
+        "/Users/matias.vizcaino/Documents/datagero_repos/meermind/course-crawler/crawled_metadata/gatech/simulation.json",
+    )
+    DEBUG_TOPIC_NUMBER = int(os.getenv("TOPIC_NUMBER", "1"))
+    DEBUG_PROJECT_DIR = os.getenv("PROJECT_DIR", "..")
 
-    # # Uncomment the line below for debugging
-    # main(transcript_path=DEBUG_TRANSCRIPT_PATH, metadata_file=DEBUG_METADATA_FILE)
-
-    # Uncomment the line below for production
-    main()
+    main(metadata_file=DEBUG_METADATA_PATH, topic_number=DEBUG_TOPIC_NUMBER, project_dir=DEBUG_PROJECT_DIR)

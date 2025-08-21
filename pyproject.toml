@@ -1,24 +1,26 @@
-[tool.poetry]
+[project]
 name = "doc2response"
 version = "0.1.0"
 description = ""
-authors = ["datagero <datagero@outlook.com>"]
 readme = "README.md"
-
-# Tell Poetry NOT to look for a package
-packages = []
-
-[tool.poetry.dependencies]
-python = "^3.11"
-llama-index = "^0.11.20"
-llama-index-vector-stores-faiss = "^0.2.1"
-faiss-cpu = "^1.9.0"
-python-dotenv = "^1.0.1"
-pymysql = "^1.1.1"
-llama-index-vector-stores-tidbvector = "^0.2.0"
-pypdf2 = "^3.0.1"
-
+requires-python = ">=3.11"
+authors = [{ name = "datagero", email = "datagero@outlook.com" }]
+dependencies = [
+    "llama-index>=0.11.20",
+    "llama-index-vector-stores-faiss>=0.2.1",
+    "faiss-cpu>=1.9.0",
+    "python-dotenv>=1.0.1,<2",
+    "pymysql>=1.1.1,<2",
+    "llama-index-vector-stores-tidbvector>=0.2.0",
+    "pypdf2>=3.0.1,<4",
+]
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = [
+    "interfaces",
+    "src",
+]
