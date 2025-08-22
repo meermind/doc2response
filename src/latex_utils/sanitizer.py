@@ -8,8 +8,8 @@ class LatexSanitizer:
             import re as _re
             # Strip code fences
             text = _re.sub(r"```+\s*latex|```+", "", text)
-            # Convert literal escaped newlines/tabs
-            text = text.replace("\\n", "\n").replace("\\t", "\t")
+            # Convert literal escaped newlines (do not convert \t: it prefixes many LaTeX commands like \text)
+            text = text.replace("\\n", "\n")
             # Remove literal tab characters and stray 'latex' lines
             text = text.replace("\t", " ")
             text = _re.sub(r"(?m)^[ \t]*latex[ \t]*$", "", text)
@@ -20,6 +20,8 @@ class LatexSanitizer:
             text = _re.sub(r"\\extbf\s*\{", r"\\textbf{", text)
             text = _re.sub(r"(?<!\\)extit\s*\{", r"\\textit{", text)
             text = _re.sub(r"\\extit\s*\{", r"\\textit{", text)
+            # Missing leading backslash for \text{...}
+            text = _re.sub(r"(?<!\\)ext\s*\{", r"\\text{", text)
             text = _re.sub(r"(?<!\\)textrightarrow", r"\\rightarrow", text)
             # Remove stray \t macro only when not starting a real command (avoid stripping '\\textbf')
             text = _re.sub(r"\\t(?![A-Za-z])", " ", text)

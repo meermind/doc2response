@@ -17,13 +17,14 @@ class Settings(BaseSettings):
     # anthropic:claude-sonnet-4-20250514
     # openai:gpt-4o"
     # openai:gpt-5-mini
+    # openai:gpt-5-nano
     # openai:gpt-5
-    ai_writer_model: KnownModelName = Field(default="openai:gpt-5", alias="AI_WRITER_MODEL")
+    ai_writer_model: KnownModelName = Field(default="openai:gpt-5-nano", alias="AI_WRITER_MODEL")
 
     # Optional per-stage overrides
-    ai_skeleton_model: KnownModelName | None = Field(default="claude-sonnet-4-20250514", alias="AI_SKELETON_MODEL")
-    ai_enhancer_model: KnownModelName | None = Field(default="claude-sonnet-4-20250514", alias="AI_ENHANCER_MODEL")
-    ai_mdframe_model: KnownModelName | None = Field(default="claude-sonnet-4-20250514", alias="AI_MDFRAME_MODEL")
+    ai_skeleton_model: KnownModelName | None = Field(default="openai:gpt-5-mini", alias="AI_SKELETON_MODEL")
+    ai_enhancer_model: KnownModelName | None = Field(default="openai:gpt-5-nano", alias="AI_ENHANCER_MODEL")
+    ai_mdframe_model: KnownModelName | None = Field(default="openai:gpt-5-nano", alias="AI_MDFRAME_MODEL")
 
     embedding_model: str = Field(default="text-embedding-3-small", alias="EMBEDDING_MODEL")
     embedding_dimension: int = Field(default=1536, alias="EMBEDDING_DIMENSION")

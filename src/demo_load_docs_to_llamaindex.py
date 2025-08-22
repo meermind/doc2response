@@ -35,39 +35,43 @@ def get_db_session(connection_url):
     Session = sessionmaker(bind=engine)
     return Session()
 
-def check_module_exists(session, table_name, module_name):
+def check_scope_exists(session, table_name, module_slug, lesson_slug):
     """
-    Checks if a module_name already exists in the database using SQLAlchemy.
+    Checks if a (module_slug, lesson_slug) scope already exists in the database.
 
     :param session: SQLAlchemy session.
     :param table_name: The name of the vector table.
-    :param module_name: The module name to check.
-    :return: True if the module exists, False otherwise.
+    :param module_slug: Module slug to check.
+    :param lesson_slug: Lesson slug to check.
+    :return: True if any rows exist for the scope, False otherwise.
     """
     query = text(f"""
         SELECT COUNT(*) as count
         FROM {table_name}
-        WHERE JSON_UNQUOTE(JSON_EXTRACT(CAST(`meta` AS JSON), '$.module_name')) = :module_name;
+        WHERE JSON_UNQUOTE(JSON_EXTRACT(CAST(`meta` AS JSON), '$.module_slug')) = :module_slug
+          AND JSON_UNQUOTE(JSON_EXTRACT(CAST(`meta` AS JSON), '$.lesson_slug')) = :lesson_slug;
     """)
-    result = session.execute(query, {"module_name": module_name}).scalar()
-    return result > 0  # True if module exists
+    result = session.execute(query, {"module_slug": module_slug, "lesson_slug": lesson_slug}).scalar()
+    return result > 0
 
 
-def delete_module_records(session, table_name, module_name):
+def delete_scope_records(session, table_name, module_slug, lesson_slug):
     """
-    Deletes all records from the database where the module_name matches using SQLAlchemy.
+    Deletes all records from the database for a (module_slug, lesson_slug) scope.
 
     :param session: SQLAlchemy session.
     :param table_name: The name of the vector table.
-    :param module_name: The module name to delete.
+    :param module_slug: Module slug to delete.
+    :param lesson_slug: Lesson slug to delete.
     """
     query = text(f"""
         DELETE FROM {table_name}
-        WHERE JSON_UNQUOTE(JSON_EXTRACT(CAST(`meta` AS JSON), '$.module_name')) = :module_name;
+        WHERE JSON_UNQUOTE(JSON_EXTRACT(CAST(`meta` AS JSON), '$.module_slug')) = :module_slug
+          AND JSON_UNQUOTE(JSON_EXTRACT(CAST(`meta` AS JSON), '$.lesson_slug')) = :lesson_slug;
     """)
-    session.execute(query, {"module_name": module_name})
+    session.execute(query, {"module_slug": module_slug, "lesson_slug": lesson_slug})
     session.commit()
-    logger.info(f"Deleted existing records for module: {module_name}")
+    logger.info(f"Deleted existing records for scope: module_slug={module_slug} lesson_slug={lesson_slug}")
 
 def _resolve_path(path: str, base_dir: str) -> str:
     """Resolve path against base_dir if not absolute and not existing as-is."""
@@ -133,12 +137,12 @@ def main(metadata_file=None, topic_number=None, project_dir=None, overwrite: boo
     except Exception:
         pass
 
-    # Extract module_name from documents
-    if not documents or "module_name" not in documents[0].metadata:
-        logger.error("Error: Could not extract module_name from documents.")
+    # Extract scope identifiers from documents
+    if not documents or "module_slug" not in documents[0].metadata or "lesson_slug" not in documents[0].metadata:
+        logger.error("Error: Could not extract module_slug/lesson_slug from documents.")
         sys.exit(1)
-
-    module_name = documents[0].metadata["module_name"]
+    module_slug = documents[0].metadata["module_slug"]
+    lesson_slug = documents[0].metadata["lesson_slug"]
 
     # Define dimensions for embeddings (e.g., OpenAI ada embeddings: 1536)
     embedding_model = OpenAIEmbedding(model="text-embedding-3-small")
@@ -167,17 +171,19 @@ def main(metadata_file=None, topic_number=None, project_dir=None, overwrite: boo
     # Create SQLAlchemy session
     session = get_db_session(tidb_connection_url)
 
-    # **Check if module exists before proceeding**
-    if check_module_exists(session, vector_table_name, module_name):
+    # **Check if scope exists before proceeding**
+    if check_scope_exists(session, vector_table_name, module_slug, lesson_slug):
         if overwrite:
-            delete_module_records(session, vector_table_name, module_name)
+            delete_scope_records(session, vector_table_name, module_slug, lesson_slug)
         else:
-            user_input = input(f"Module '{module_name}' already exists. Do you want to overwrite it? (yes/no): ").strip().lower()
+            user_input = input(
+                f"Scope module_slug='{module_slug}', lesson_slug='{lesson_slug}' already exists. Overwrite? (yes/no): "
+            ).strip().lower()
             if user_input not in ["y", "yes"]:
-                print(f"Skipping processing for '{module_name}'.")
+                print(f"Skipping processing for scope module_slug='{module_slug}', lesson_slug='{lesson_slug}'.")
                 session.close()
                 sys.exit(0)  # Exit without processing
-            delete_module_records(session, vector_table_name, module_name)
+            delete_scope_records(session, vector_table_name, module_slug, lesson_slug)
 
     session.close()  # Close SQLAlchemy session after database checks
 

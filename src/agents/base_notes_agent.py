@@ -23,6 +23,7 @@ class BaseNotesAgent:
         module_name: str,
         module_slug: Optional[str],
         output_base_dir: Optional[str] = None,
+        lesson_slug: Optional[str] = None,
         metadata_store: MetadataStore | None = None,
     ) -> None:
         self.settings = Settings()
@@ -32,6 +33,7 @@ class BaseNotesAgent:
         self.module_name = module_name
         self.module_slug = module_slug
         self.output_base_dir = output_base_dir or os.getenv("D2R_OUTPUT_BASE") or "assistant_latex"
+        self.lesson_slug = lesson_slug or os.getenv("LESSON_SLUG") or None
 
         # Embeddings
         self.embedding_model = self.settings.create_embedding()
@@ -87,9 +89,16 @@ class BaseNotesAgent:
             pass
 
     def base_filters(self) -> List[Dict[str, str]]:
-        if self.module_slug:
-            return [{"key": "module_slug", "value": self.module_slug, "operator": "=="}]
-        return [{"key": "module_name", "value": self.module_name, "operator": "=="}]
+        """Base scoping filters for all retrievals.
+
+        Prefer (module_slug AND lesson_slug) when available; fall back progressively.
+        """
+        if self.module_slug and self.lesson_slug:
+            return [
+                {"key": "module_slug", "value": self.module_slug, "operator": "=="},
+                {"key": "lesson_slug", "value": self.lesson_slug, "operator": "=="},
+            ]
+        raise ValueError("Both module_slug and lesson_slug are required in BaseNotesAgent for metadata filtering")
 
     def base_metadata_filters(self) -> MetadataFilters:
         return MetadataFilters(filters=[MetadataFilter(**f) for f in self.base_filters()])
@@ -119,10 +128,8 @@ class BaseNotesAgent:
 
     # Topic-level (item_slug) retrieval
     def item_filters(self, item_slug: str) -> list[dict[str, str]]:
-        filters: list[dict[str, str]] = []
-        # Keep module scoping if available to reduce noise
-        if self.module_slug:
-            filters.append({"key": "module_slug", "value": self.module_slug, "operator": "=="})
+        # Reuse base scoping (module_slug/lesson_slug) and add item_slug
+        filters: list[dict[str, str]] = list(self.base_filters())
         filters.append({"key": "item_slug", "value": item_slug, "operator": "=="})
         return filters
 
@@ -243,7 +250,7 @@ class BaseNotesAgent:
         return None
 
     def out_dir(self) -> str:
-        return OutputPaths(base_dir=self.output_base_dir, course_name=self.course_name, module_name=self.module_name).module_dir()
+        return OutputPaths(base_dir=self.output_base_dir, course_name=self.course_name, module_name=self.module_name, lesson_slug=self.lesson_slug).module_dir()
 
     def ensure_out_dir(self) -> str:
         path = self.out_dir()

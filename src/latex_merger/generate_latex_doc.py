@@ -13,7 +13,7 @@ def sort_by_order(item):
 
 ## Note: Do not sanitize or heal content here. Enhanced outputs should already be clean.
 
-def execute(course, module, module_name, input_base_dir=None, overwrite: bool | None = None, assistant_message_path: str | None = None):
+def execute(course, module, module_name, input_base_dir=None, overwrite: bool | None = None, assistant_message_path: str | None = None, lesson_slug: str | None = None):
     """
     Main function to generate a LaTeX document for a given module.
     """
@@ -21,13 +21,13 @@ def execute(course, module, module_name, input_base_dir=None, overwrite: bool | 
     if input_base_dir is None:
         input_base_dir = os.getenv("INPUT_BASE_DIR", "assistant_latex")
     # Resolve module directories consistently via MetadataStore
-    module_dir = MetadataStore.module_dir(input_base_dir, course, module_name)
+    module_dir = MetadataStore.module_dir(input_base_dir, course, module_name, lesson_slug)
     metadata_dir = MetadataStore.metadata_dir(module_dir)
     configure_logging()
     log = get_logger(__name__)
     log.info(f"[green]Merging[/] course={course} module={module} module_name={module_name}")
     # Load sections via MetadataStore (prefers enhanced subsection files when present)
-    sections, _intro_path = MetadataStore.load_sections(input_base_dir, course, module_name)
+    sections, _intro_path = MetadataStore.load_sections(input_base_dir, course, module_name, lesson_slug)
     raw_meta = {"sections": sections}
     # Validate metadata
     metadata_model = LatexMetadata.model_validate(raw_meta)

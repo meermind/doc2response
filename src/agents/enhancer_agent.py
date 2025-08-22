@@ -118,7 +118,7 @@ class SubsectionEnhancerAgent(BaseNotesAgent):
         if enhanced_any:
             try:
                 assistant_message_path = os.path.join(enhanced_dir, "assistant_message.tex")
-                collate_from_metadata(self.output_base_dir, self.course_name, self.module_name, assistant_message_path)
+                collate_from_metadata(self.output_base_dir, self.course_name, self.module_name, assistant_message_path, lesson_slug=self.lesson_slug)
                 # Persist mdframe_skeleton.json for downstream mdframe agent
                 module_dir = self.out_dir()
                 if mdframe_entries:

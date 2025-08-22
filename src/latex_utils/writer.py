@@ -58,13 +58,14 @@ class LatexSectionWriter:
 
 
 class LatexAssembler:
-    def __init__(self, output_base_dir: str, course_name: str, module_name: str) -> None:
+    def __init__(self, output_base_dir: str, course_name: str, module_name: str, lesson_slug: str | None = None) -> None:
         from src.models.paths import OutputPaths  # local import to avoid cycles
-        self.paths = OutputPaths(base_dir=output_base_dir, course_name=course_name, module_name=module_name)
+        self.paths = OutputPaths(base_dir=output_base_dir, course_name=course_name, module_name=module_name, lesson_slug=lesson_slug)
         self.module_dir = self.paths.module_dir()
         self.output_base_dir = output_base_dir
         self.course_name = course_name
         self.module_name = module_name
+        self.lesson_slug = lesson_slug
         self.writer = LatexSectionWriter()
 
     def write_intro(self, intro_title: str) -> str:
@@ -101,7 +102,7 @@ class LatexAssembler:
             f.write("\n\n".join([p for p in parts if p.strip()]))
 
     def collate_from_metadata(self, input_base_dir: str, out_path: str) -> None:
-        sections, intro_path = MetadataStore.load_sections(input_base_dir, self.course_name, self.module_name)
+        sections, intro_path = MetadataStore.load_sections(input_base_dir, self.course_name, self.module_name, self.lesson_slug)
         self.collate(sections, intro_path, out_path)
 
 
@@ -129,7 +130,7 @@ def load_metadata_sections(input_base_dir: str, course: str, module_name: str) -
     return MetadataStore.load_sections(input_base_dir, course, module_name)
 
 
-def collate_from_metadata(input_base_dir: str, course: str, module_name: str, out_path: str) -> None:
-    assembler = LatexAssembler(input_base_dir, course, module_name)
+def collate_from_metadata(input_base_dir: str, course: str, module_name: str, out_path: str, lesson_slug: str | None = None) -> None:
+    assembler = LatexAssembler(input_base_dir, course, module_name, lesson_slug=lesson_slug)
     assembler.collate_from_metadata(input_base_dir, out_path)
 

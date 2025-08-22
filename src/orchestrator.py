@@ -30,14 +30,19 @@ def extract_topic_data(metadata_file, topic_number):
     course = load_course_metadata(metadata_file, project_dir)
     module = course.select_module_by_index(topic_number)
 
-    return [{
-        "metadata_file": metadata_file,
-        "course": course.course_name,
-        "module": f"Topic {topic_number}",
-        "module_name": module.module_name,
-        "module_index": topic_number,
-        "module_slug": module.module_slug,
-    }]
+    rows = []
+    for lesson in module.lessons:
+        rows.append({
+            "metadata_file": metadata_file,
+            "course": course.course_name,
+            "module": f"Topic {topic_number}",
+            "module_name": module.module_name,
+            "module_index": topic_number,
+            "module_slug": module.module_slug,
+            "lesson_name": lesson.lesson_name,
+            "lesson_slug": lesson.lesson_slug,
+        })
+    return rows
 
 # Define pipeline functions
 def run_load_docs(metadata_file, topic_number, project_dir="..", overwrite=False):
@@ -51,7 +56,7 @@ def run_load_docs(metadata_file, topic_number, project_dir="..", overwrite=False
 
 ## No direct 'call' stage: skeleton and enhancer replace the old demo_call_llamaindex.
 
-def run_build_skeleton(module_name, module_slug=None, output_base_dir=None, list_top_k=None, course_name=None):
+def run_build_skeleton(module_name, module_slug=None, output_base_dir=None, list_top_k=None, course_name=None, lesson_slug: str | None = None):
     """
     Build the lecture-notes skeleton (skeleton.json, metadata.json, subsection_mapping.json).
     """
@@ -61,11 +66,11 @@ def run_build_skeleton(module_name, module_slug=None, output_base_dir=None, list
         list_top_k = int(os.getenv("D2R_LIST_TOP_K_SKELETON", "500"))
     if course_name is None:
         course_name = os.getenv("COURSE_NAME", "Course")
-    agent = SkeletonAgent(course_name=course_name, module_name=module_name, module_slug=module_slug, output_base_dir=output_base_dir)
+    agent = SkeletonAgent(course_name=course_name, module_name=module_name, module_slug=module_slug, output_base_dir=output_base_dir, lesson_slug=lesson_slug)
     log.info("[bold cyan]Running[/]: SkeletonAgent.run")
     return agent.run(list_top_k=list_top_k, course_name=course_name)
 
-def run_enhance_subsections(course_name, module_name, module_slug=None, output_base_dir=None, top_k_item=None):
+def run_enhance_subsections(course_name, module_name, module_slug=None, output_base_dir=None, top_k_item=None, lesson_slug: str | None = None):
     """
     Enhance subsections by generating per-subsection LaTeX files using the skeleton.
     """
@@ -73,29 +78,29 @@ def run_enhance_subsections(course_name, module_name, module_slug=None, output_b
         output_base_dir = os.getenv("D2R_OUTPUT_BASE") or "assistant_latex"
     if top_k_item is None:
         top_k_item = int(os.getenv("D2R_TOP_K_ITEM", "10"))
-    agent = SubsectionEnhancerAgent(course_name=course_name, module_name=module_name, module_slug=module_slug, output_base_dir=output_base_dir)
+    agent = SubsectionEnhancerAgent(course_name=course_name, module_name=module_name, module_slug=module_slug, output_base_dir=output_base_dir, lesson_slug=lesson_slug)
     log.info("[bold cyan]Running[/]: SubsectionEnhancerAgent.run")
     return agent.run(top_k_item=top_k_item)
 
-def run_generate_latex(course, module, module_name, input_base_dir=None, overwrite=False, assistant_message_path: str | None = None):
+def run_generate_latex(course, module, module_name, input_base_dir=None, overwrite=False, assistant_message_path: str | None = None, lesson_slug: str | None = None):
     """
     Run the LaTeX generation pipeline by calling the module directly.
     """
     log.info("[bold cyan]Running[/] (direct): latex_merger.generate_latex_doc.execute")
     from src.latex_merger.generate_latex_doc import execute
     if input_base_dir:
-        execute(course, module, module_name, input_base_dir=input_base_dir, overwrite=overwrite, assistant_message_path=assistant_message_path)
+        execute(course, module, module_name, input_base_dir=input_base_dir, overwrite=overwrite, assistant_message_path=assistant_message_path, lesson_slug=lesson_slug)
     else:
-        execute(course, module, module_name, overwrite=overwrite, assistant_message_path=assistant_message_path)
+        execute(course, module, module_name, overwrite=overwrite, assistant_message_path=assistant_message_path, lesson_slug=lesson_slug)
 
-def _resolve_assistant_message_path(course: str, module_name: str, prefer_enhanced: bool = True, base_dir: str | None = None) -> str | None:
+def _resolve_assistant_message_path(course: str, module_name: str, prefer_enhanced: bool = True, base_dir: str | None = None, lesson_slug: str | None = None) -> str | None:
     """Deterministically resolve assistant_message.tex path from disk.
 
     If prefer_enhanced is True and an enhanced assistant_message exists,
     return that; otherwise fall back to the root assistant_message.
     """
     out_base = base_dir or os.getenv("D2R_OUTPUT_BASE") or "assistant_latex"
-    module_dir = MetadataStore.module_dir(out_base, course, module_name)
+    module_dir = MetadataStore.module_dir(out_base, course, module_name, lesson_slug)
     enhanced_path = os.path.join(module_dir, "enhanced", "assistant_message.tex")
     root_path = os.path.join(module_dir, "assistant_message.tex")
     if prefer_enhanced and os.path.exists(enhanced_path):
@@ -105,7 +110,7 @@ def _resolve_assistant_message_path(course: str, module_name: str, prefer_enhanc
     return None
 
 
-def orchestrate_pipeline(run_load=True, run_generate=True, metadata_file=None, topic_number=None, overwrite=False, run_skeleton=None, run_enhance=None, run_mdframe: bool = False):
+def orchestrate_pipeline(run_load=True, run_generate=True, metadata_file=None, topic_number=None, overwrite=False, run_skeleton=None, run_enhance=None, run_mdframe: bool = False, lesson_slug: str | None = None):
     """
     Orchestrate the pipeline based on the provided flags.
 
@@ -186,7 +191,8 @@ def orchestrate_pipeline(run_load=True, run_generate=True, metadata_file=None, t
         "METADATA_FILE",
         "/Users/matias.vizcaino/Documents/datagero_repos/meermind/course-crawler/crawled_metadata/gatech/simulation.json",
     )
-    topic = int(topic_number or os.getenv("TOPIC_NUMBER", "1"))
+    topic = int(topic_number or os.getenv("TOPIC_NUMBER", "2"))
+    lesson_slug_selection = lesson_slug or os.getenv("LESSON_SLUG", '01@week-02')
     log.info(f"[green]Input[/] METADATA_FILE={metadata_path} TOPIC_NUMBER={topic}")
     topic_data = extract_topic_data(metadata_path, topic)
 
@@ -197,6 +203,11 @@ def orchestrate_pipeline(run_load=True, run_generate=True, metadata_file=None, t
         module_name = topic["module_name"]
         module_index = topic["module_index"]
         module_slug = topic.get("module_slug")
+        lesson_slug_local = topic.get("lesson_slug")
+
+        if lesson_slug_local != lesson_slug_selection:
+            log.info(f"[yellow]Skipping[/] {lesson_slug_local} != {lesson_slug_selection}")
+            continue
 
         if not metadata_file or not module_name:
             print("Error: METADATA_FILE and MODULE_NAME must be set.")
@@ -217,9 +228,9 @@ def orchestrate_pipeline(run_load=True, run_generate=True, metadata_file=None, t
             skeleton_out = None
             enhance_out = None
             if do_skeleton:
-                skeleton_out = run_build_skeleton(module_name, module_slug=module_slug, course_name=course)
+                skeleton_out = run_build_skeleton(module_name, module_slug=module_slug, course_name=course, lesson_slug=lesson_slug_local)
             if do_enhance:
-                enhance_out = run_enhance_subsections(course, module_name, module_slug=module_slug)
+                enhance_out = run_enhance_subsections(course, module_name, module_slug=module_slug, lesson_slug=lesson_slug_local)
 
             # Prefer enhanced assistant_message from current run; else skeleton
             assistant_message = (
@@ -230,10 +241,10 @@ def orchestrate_pipeline(run_load=True, run_generate=True, metadata_file=None, t
             # Optionally run mdframe agent. When requested, always target the on-disk enhanced
             # outputs if available; else fall back to skeleton assistant_message.
             if run_mdframe:
-                resolved_path = _resolve_assistant_message_path(course, module_name, prefer_enhanced=True)
+                resolved_path = _resolve_assistant_message_path(course, module_name, prefer_enhanced=True, lesson_slug=lesson_slug_local)
                 assistant_for_md = resolved_path or assistant_message
                 if assistant_for_md:
-                    md_agent = MdframeAgent(course_name=course, module_name=module_name, module_slug=module_slug)
+                    md_agent = MdframeAgent(course_name=course, module_name=module_name, module_slug=module_slug, lesson_slug=lesson_slug_local)
                     md_out = md_agent.run(assistant_message_path=assistant_for_md)
                     if md_out and md_out.get("assistant_message"):
                         assistant_message = md_out["assistant_message"]
@@ -242,7 +253,7 @@ def orchestrate_pipeline(run_load=True, run_generate=True, metadata_file=None, t
             # Note: mdframe is opt-in and runs only when --mdframe is provided
 
             if run_generate:
-                run_generate_latex(course, module, module_name, overwrite=overwrite, assistant_message_path=assistant_message)
+                run_generate_latex(course, module, module_name, overwrite=overwrite, assistant_message_path=assistant_message, lesson_slug=lesson_slug_local)
         except subprocess.CalledProcessError as e:
             log.error(f"[red]Pipeline step failed[/]: {e}")
 
@@ -260,6 +271,7 @@ if __name__ == "__main__":
     parser.add_argument("--enhance", action="store_true", help="Run subsection enhancement (costly)")
     # Mdframe pass: when set, run the mdframe agent against enhanced outputs (if present)
     parser.add_argument("--mdframe", action="store_true", help="Run mdframe agent using enhanced outputs if available")
+    parser.add_argument("--lesson_slug", required=False, help="Optional lesson_slug to further nest outputs and inputs")
     args = parser.parse_args()
 
     # Determine skeleton/enhance behavior
@@ -276,4 +288,5 @@ if __name__ == "__main__":
         run_skeleton=run_skeleton_flag,
         run_enhance=run_enhance_flag,
         run_mdframe=run_mdframe_flag,
+        lesson_slug=args.lesson_slug,
     )

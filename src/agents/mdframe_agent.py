@@ -271,7 +271,7 @@ class MdframeAgent(BaseNotesAgent):
         if updated_any:
             try:
                 # Collate using metadata; merger prefers mdframed over enhanced automatically
-                collate_from_metadata(self.output_base_dir, self.course_name, self.module_name, out_path)
+                collate_from_metadata(self.output_base_dir, self.course_name, self.module_name, out_path, lesson_slug=self.lesson_slug)
             except Exception:
                 pass
             log.info("Assistant message updated: %s", out_path)

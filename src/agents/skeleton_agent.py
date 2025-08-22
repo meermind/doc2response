@@ -88,7 +88,7 @@ class SkeletonAgent(BaseNotesAgent):
         return self.metadata_store.save_mapping(out_dir, mapping)
 
     def write_subsections(self, course_name: str, subsections: List[Dict[str, Any]]) -> List[Dict[str, str]]:
-        assembler = LatexAssembler(self.output_base_dir, course_name, self.module_name)
+        assembler = LatexAssembler(self.output_base_dir, course_name, self.module_name, lesson_slug=self.lesson_slug)
         entries: List[Dict[str, str]] = []
         for i, s in enumerate(subsections, start=1):
             title = s.get("title", "Section")
@@ -123,7 +123,7 @@ class SkeletonAgent(BaseNotesAgent):
             except Exception:
                 parsed2 = {"intro_latex": "", "evaluation_latex": ""}
             writer = LatexSectionWriter()
-            assembler = LatexAssembler(self.output_base_dir, course_name, self.module_name)
+            assembler = LatexAssembler(self.output_base_dir, course_name, self.module_name, lesson_slug=self.lesson_slug)
             # Intro (let writer handle sanitization + heading)
             intro_path = assembler.paths.intro_path(intro_title)
             writer.write_section_content(intro_title, parsed2.get("intro_latex") or f"\\section{{{intro_title}}}\n", intro_path)

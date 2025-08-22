@@ -7,9 +7,9 @@ class MetadataStore:
     def metadata_dir(module_dir: str) -> str:
         return os.path.join(module_dir, "metadata")
     @staticmethod
-    def load_sections(input_base_dir: str, course: str, module_name: str) -> Tuple[List[Dict[str, str]], str]:
+    def load_sections(input_base_dir: str, course: str, module_name: str, lesson_slug: str | None = None) -> Tuple[List[Dict[str, str]], str]:
         import json as _json
-        module_dir = os.path.join(input_base_dir, course, module_name)
+        module_dir = os.path.join(input_base_dir, course, module_name) if not lesson_slug else os.path.join(input_base_dir, course, module_name, lesson_slug)
         metadata_path = os.path.join(MetadataStore.metadata_dir(module_dir), "metadata.json")
         with open(metadata_path, 'r', encoding='utf-8') as f:
             meta = _json.load(f)
@@ -74,8 +74,8 @@ class MetadataStore:
             return {}
 
     @staticmethod
-    def module_dir(base_dir: str, course: str, module_name: str) -> str:
-        return os.path.join(base_dir, course, module_name)
+    def module_dir(base_dir: str, course: str, module_name: str, lesson_slug: str | None = None) -> str:
+        return os.path.join(base_dir, course, module_name) if not lesson_slug else os.path.join(base_dir, course, module_name, lesson_slug)
 
     @staticmethod
     def save_unique_topics(base_dir: str, course: str, module_name: str, topics: List[str]) -> str:
