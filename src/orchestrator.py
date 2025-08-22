@@ -7,6 +7,8 @@ import shutil
 from dotenv import load_dotenv
 from src.models.metadata import load_course_metadata
 from src.logger import configure_logging, get_logger
+from src.agents.skeleton_agent import SkeletonAgent
+from src.agents.enhancer_agent import SubsectionEnhancerAgent
 
 # Load environment variables and logging
 load_dotenv()
@@ -51,27 +53,27 @@ def run_build_skeleton(module_name, module_slug=None, output_base_dir=None, list
     """
     Build the lecture-notes skeleton (skeleton.json, metadata.json, subsection_mapping.json).
     """
-    log.info("[bold cyan]Running[/] (direct): skeleton_builder.build_skeleton")
-    from src.skeleton_builder import build_skeleton
     if output_base_dir is None:
         output_base_dir = os.getenv("D2R_OUTPUT_BASE") or "assistant_latex"
     if list_top_k is None:
         list_top_k = int(os.getenv("D2R_LIST_TOP_K_SKELETON", "500"))
     if course_name is None:
         course_name = os.getenv("COURSE_NAME", "Course")
-    return build_skeleton(module_name, module_slug, output_base_dir, list_top_k, course_name)
+    agent = SkeletonAgent(course_name=course_name, module_name=module_name, module_slug=module_slug, output_base_dir=output_base_dir)
+    log.info("[bold cyan]Running[/]: SkeletonAgent.run")
+    return agent.run(list_top_k=list_top_k, course_name=course_name)
 
 def run_enhance_subsections(course_name, module_name, module_slug=None, output_base_dir=None, top_k_item=None):
     """
     Enhance subsections by generating per-subsection LaTeX files using the skeleton.
     """
-    log.info("[bold cyan]Running[/] (direct): subsection_enhancer.enhance_subsections")
-    from src.subsection_enhancer import enhance_subsections
     if output_base_dir is None:
         output_base_dir = os.getenv("D2R_OUTPUT_BASE") or "assistant_latex"
     if top_k_item is None:
         top_k_item = int(os.getenv("D2R_TOP_K_ITEM", "10"))
-    enhance_subsections(course_name, module_name, module_slug, output_base_dir, top_k_item)
+    agent = SubsectionEnhancerAgent(course_name=course_name, module_name=module_name, module_slug=module_slug, output_base_dir=output_base_dir)
+    log.info("[bold cyan]Running[/]: SubsectionEnhancerAgent.run")
+    agent.run(top_k_item=top_k_item)
 
 def run_generate_latex(course, module, module_name, input_base_dir=None, overwrite=False):
     """
