@@ -10,6 +10,24 @@ from src.models.paths import OutputPaths
 def sort_by_order(item):
     return item['order']
 
+def _normalize_common_command_typos(text: str) -> str:
+    """Conservatively fix common LaTeX command typos near validation.
+
+    Only replace when used as a command (immediately before '{') to avoid
+    over-correcting regular words. Handles both bare and already-escaped forms.
+    """
+    try:
+        import re as _re
+        # textbf
+        text = _re.sub(r"(?<!\\)extbf\{", r"\\textbf{", text)
+        text = _re.sub(r"\\extbf\{", r"\\textbf{", text)
+        # textit
+        text = _re.sub(r"(?<!\\)extit\{", r"\\textit{", text)
+        text = _re.sub(r"\\extit\{", r"\\textit{", text)
+        return text
+    except Exception:
+        return text
+
 def execute(course, module, module_name, input_base_dir=None, overwrite: bool | None = None):
     """
     Main function to generate a LaTeX document for a given module.
@@ -79,6 +97,8 @@ def execute(course, module, module_name, input_base_dir=None, overwrite: bool | 
             log.info(f"[success]Using enhanced[/]: {os.path.basename(chosen_path)}")
         with open(chosen_path, 'r') as file:
             content = file.read()
+        # Normalize common command typos prior to validation
+        content = _normalize_common_command_typos(content)
         # Validate each section's content; self-heal known issues
         try:
             SectionContent(ref=SectionRef(**section), text=content)
@@ -151,8 +171,8 @@ def execute(course, module, module_name, input_base_dir=None, overwrite: bool | 
                     return "\n".join(esc)
                 healed = _escape_underscores(healed)
 
-                # Fix missing backslash in \textbf occurrences produced as 'extbf{'
-                healed = _re.sub(r"(?<!\\)extbf\{", r"\\textbf{", healed)
+                # Normalize common command typos
+                healed = _normalize_common_command_typos(healed)
                 # Remove literal tabs and stray 'latex' lines
                 healed = healed.replace("\t", " ")
                 healed = _re.sub(r"\\t\s*", " ", healed)
@@ -160,20 +180,30 @@ def execute(course, module, module_name, input_base_dir=None, overwrite: bool | 
 
                 # Escape stray & characters outside alignment/table environments
                 def _escape_misplaced_ampersands(s: str) -> str:
-                    # Very simple heuristic: process line by line; skip lines that look like tabular/array rows
+                    # Only skip escaping inside alignment/table envs; escape elsewhere
+                    align_envs = {"tabular", "tabularx", "array", "tabu", "align", "aligned", "alignat", "eqnarray"}
                     out_lines = []
-                    env_depth = 0
+                    env_stack = []
+                    begin_re = _re.compile(r"\\begin\{([^}]+)\}")
+                    end_re = _re.compile(r"\\end\{([^}]+)\}")
                     for line in s.splitlines():
-                        if "\\begin{" in line:
-                            env_depth += 1
-                        if env_depth == 0:
-                            # replace & not preceded by backslash
+                        m_b = begin_re.search(line)
+                        m_e = end_re.search(line)
+                        if m_b:
+                            env_stack.append(m_b.group(1))
+                        in_align = any(e in align_envs for e in env_stack)
+                        if not in_align:
                             line = _re.sub(r"(?<!\\)&", r"\\&", line)
-                        if "\\end{" in line and env_depth > 0:
-                            env_depth -= 1
+                        if m_e and env_stack and env_stack[-1] == m_e.group(1):
+                            env_stack.pop()
                         out_lines.append(line)
                     return "\n".join(out_lines)
                 healed = _escape_misplaced_ampersands(healed)
+
+                # Math de-noising: fix duplicated inline math delimiters and operatorname typos
+                healed = _re.sub(r"\\\(\s*\\\(", r"\\(", healed)
+                healed = _re.sub(r"\)\s*\\\(", r"(", healed)
+                healed = _re.sub(r"\\\(\s*\(operatorname", r"\\(\\operatorname", healed)
             except Exception:
                 pass
             # Additional sanitization: unicode math, mdframed tags, missing headings, and code fences

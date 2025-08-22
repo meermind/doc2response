@@ -45,18 +45,7 @@ def run_load_docs(metadata_file, topic_number, project_dir="..", overwrite=False
     # Call programmatically to avoid subprocess; this still requires proper env/DB when enabled
     load_main(metadata_file=metadata_file, topic_number=topic_number, project_dir=project_dir, overwrite=overwrite)
 
-def run_call_llamaindex(module_name, module_slug=None, output_base_dir=None):
-    """
-    Run the LlamaIndex processing pipeline by calling the module directly.
-    """
-    log.info("[bold cyan]Running[/] (direct): demo_call_llamaindex.main")
-    from src.demo_call_llamaindex import main as call_main
-    args = ["--module_name", module_name]
-    if module_slug:
-        args += ["--module_slug", module_slug]
-    if output_base_dir:
-        args += ["--output_base_dir", output_base_dir]
-    call_main(args=args)
+## No direct 'call' stage: skeleton and enhancer replace the old demo_call_llamaindex.
 
 def run_build_skeleton(module_name, module_slug=None, output_base_dir=None, list_top_k=None, course_name=None):
     """
@@ -95,7 +84,7 @@ def run_generate_latex(course, module, module_name, input_base_dir=None, overwri
     else:
         execute(course, module, module_name, overwrite=overwrite)
 
-def orchestrate_pipeline(run_load=True, run_call=True, run_generate=True, metadata_file=None, topic_number=None, overwrite=False, run_skeleton=None, run_enhance=None):
+def orchestrate_pipeline(run_load=True, run_generate=True, metadata_file=None, topic_number=None, overwrite=False, run_skeleton=None, run_enhance=None):
     """
     Orchestrate the pipeline based on the provided flags.
 
@@ -198,8 +187,8 @@ def orchestrate_pipeline(run_load=True, run_call=True, run_generate=True, metada
             if run_load:
                 run_load_docs(metadata_file, module_index, overwrite=overwrite)
             # Determine two-phase flags
-            # Skeleton: default follows call step unless explicitly skipped via CLI
-            do_skeleton = run_skeleton if run_skeleton is not None else bool(run_call)
+            # Skeleton: enabled by default unless explicitly skipped via CLI
+            do_skeleton = run_skeleton if run_skeleton is not None else True
             # Enhancement: off by default; enable only when explicitly requested via CLI flag
             do_enhance = bool(run_enhance)
             if not do_enhance:
@@ -220,7 +209,7 @@ if __name__ == "__main__":
     parser.add_argument("--topic_number", type=int, required=False, help="1-based topic index to process")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite existing data and outputs without prompting")
     parser.add_argument("--skip_load", action="store_true", help="Skip load docs step")
-    parser.add_argument("--skip_call", action="store_true", help="Skip LLM call step")
+    # No separate 'call' stage; skeleton/enhance replace it
     parser.add_argument("--skip_generate", action="store_true", help="Skip LaTeX generation step")
     # Skeleton control (same style as the others): skip if flag present
     parser.add_argument("--skip_skeleton", action="store_true", help="Skip building the skeleton step")
@@ -234,7 +223,6 @@ if __name__ == "__main__":
 
     orchestrate_pipeline(
         run_load=not args.skip_load,
-        run_call=not args.skip_call,
         run_generate=not args.skip_generate,
         metadata_file=args.metadata_file,
         topic_number=args.topic_number,

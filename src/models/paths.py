@@ -23,3 +23,4 @@ class OutputPaths(BaseModel):
         return os.path.join(self.module_dir(), f"{title}.tex")
 
 
+

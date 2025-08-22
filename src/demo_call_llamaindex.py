@@ -10,16 +10,15 @@ import shutil
 from sqlalchemy import URL
 from pydantic import BaseModel
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.models.openai import OpenAIModel
 from llama_index.vector_stores.tidbvector import TiDBVectorStore
 from llama_index.core.retrievers import VectorIndexRetriever
 from llama_index.core import (
     VectorStoreIndex,
 )
 from llama_index.core.vector_stores.types import MetadataFilter, MetadataFilters, FilterCondition
-from llama_index.embeddings.openai import OpenAIEmbedding
 
-from models.config import TiDBSettings, OpenAISettings
+from models.config import TiDBSettings
+from src.models.settings import Settings
 from src.models.context import CourseContext
 from src.models.paths import OutputPaths
 from models.latex import LatexMetadata, SectionRef
@@ -109,14 +108,15 @@ def main(args=None):
 
     # Load configuration and prompts
     db = TiDBSettings()
-    ai = OpenAISettings()
-    assistant_message_prompt = load_prompt(db.prompt_assistant_message_file)
-    intro_query_prompt = load_prompt(db.prompt_intro_query_file)
-    subsection_query_prompt = load_prompt(db.prompt_subsection_query_file)
+    settings = Settings()
+    assistant_message_prompt = load_prompt(settings.prompt_assistant_message_file)
+    intro_query_prompt = load_prompt(settings.prompt_intro_query_file)
+    subsection_query_prompt = load_prompt(settings.prompt_subsection_query_file)
 
     # Prepare embeddings and vector store
-    embedding_model = OpenAIEmbedding(model=db.embedding_model_name)
-    embedding_dimension = db.embedding_dimension
+    # Embeddings via central settings
+    embedding_model = settings.create_embedding()
+    embedding_dimension = settings.embedding_dimension
 
     tidb_connection_url = URL(
         "mysql+pymysql",
@@ -165,7 +165,7 @@ def main(args=None):
 
     # Define the agent and its tools
     agent = Agent(
-        model=OpenAIModel(ai.writer_model),
+        model=settings.ai_writer_model,
         system_prompt=(
             "You are a LaTeX writer agent. Generate valid LaTeX only (no code fences). "
             "Produce one introduction section and multiple subsections."

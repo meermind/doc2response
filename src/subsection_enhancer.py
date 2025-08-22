@@ -5,7 +5,7 @@ from typing import List, Dict, Any
 
 from dotenv import load_dotenv
 from sqlalchemy import URL
-from llama_index.embeddings.openai import OpenAIEmbedding
+from src.models.settings import Settings
 from llama_index.core.retrievers import VectorIndexRetriever
 from llama_index.core import VectorStoreIndex
 from llama_index.vector_stores.tidbvector import TiDBVectorStore
@@ -15,7 +15,7 @@ from pydantic_ai.models.openai import OpenAIModel
 
 from src.logger import configure_logging, get_logger
 from src.models.latex import SectionRef, SectionContent
-from models.config import TiDBSettings, OpenAISettings
+from models.config import TiDBSettings
 from src.models.paths import OutputPaths
 
 
@@ -25,8 +25,8 @@ def enhance_subsections(course_name: str, module_name: str, module_slug: str | N
     log = get_logger(__name__)
 
     db = TiDBSettings()
-    ai = OpenAISettings()
-    embedding_model = OpenAIEmbedding(model=db.embedding_model_name)
+    settings = Settings()
+    embedding_model = settings.create_embedding()
     tidb_connection_url = URL(
         "mysql+pymysql",
         username=db.username,
@@ -99,7 +99,7 @@ def enhance_subsections(course_name: str, module_name: str, module_slug: str | N
             continue
         slug_to_nodes.setdefault(slug, []).append(n)
 
-    agent = Agent(model=OpenAIModel(ai.writer_model))
+    agent = Agent(model=settings.ai_writer_model)
 
     def _sanitize_tex(s: str) -> str:
         import re as _re
@@ -128,6 +128,20 @@ def enhance_subsections(course_name: str, module_name: str, module_slug: str | N
         s = _re.sub(r"\bt\\times", r" \\times", s)
         # Fix tabular column spec 'extwidth' -> '\textwidth'
         s = _re.sub(r"p\{\s*([0-9.]+)\s*extwidth\s*\}", r"p{\1\\textwidth}", s)
+        # Strip any accidental end-of-document from enhanced fragments
+        s = _re.sub(r"(?mi)^\\end\{document\}\s*$", "", s)
+        # Fix common language phrases where \\times was misused for English 'times'
+        s = _re.sub(r"\bwait\s+t\s*\\times\b", "wait times", s, flags=_re.IGNORECASE)
+        s = _re.sub(r"\bwaiting\s+t\s*\\times\b", "waiting times", s, flags=_re.IGNORECASE)
+        # Replace \times outside math with literal 'x' to avoid Missing $ errors (line heuristic)
+        def _fix_times_outside_math(txt: str) -> str:
+            out = []
+            for line in txt.splitlines():
+                if ("$" not in line) and ("\\(" not in line) and ("\\[" not in line):
+                    line = line.replace("\\times", "x")
+                out.append(line)
+            return "\n".join(out)
+        s = _fix_times_outside_math(s)
         # Escape underscores outside math
         def _escape_underscores(txt: str) -> str:
             out = []
@@ -251,7 +265,7 @@ def enhance_subsections(course_name: str, module_name: str, module_slug: str | N
             out_text = f"\\subsection{{{title}}}\n" + out_text
         try:
             out_preview = out_text[:400].replace("\n", " ")
-            log.info("[highlight]Enhancer response preview[/]: %s%s", out_preview, "..." if len(out_text) > 400 else "")
+            # log.info("[highlight]Enhancer response preview[/]: %s%s", out_preview, "..." if len(out_text) > 400 else "")
         except Exception:
             pass
         # Sanitize and validate; write .err.txt on failure but keep healed output

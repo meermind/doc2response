@@ -5,7 +5,7 @@ from typing import List, Dict, Any, Tuple
 
 from dotenv import load_dotenv
 from sqlalchemy import URL
-from llama_index.embeddings.openai import OpenAIEmbedding
+from src.models.settings import Settings
 from llama_index.core.retrievers import VectorIndexRetriever
 from llama_index.core import VectorStoreIndex
 from llama_index.vector_stores.tidbvector import TiDBVectorStore
@@ -14,9 +14,8 @@ from llama_index.core.vector_stores.types import MetadataFilter, MetadataFilters
 from src.logger import configure_logging, get_logger
 from src.models.latex import LatexMetadata, SectionRef
 from src.models.paths import OutputPaths
-from models.config import TiDBSettings, OpenAISettings
+from models.config import TiDBSettings
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
 
 
 def build_skeleton(module_name: str, module_slug: str | None, output_base_dir: str, list_top_k: int, course_name: str) -> Dict:
@@ -26,7 +25,8 @@ def build_skeleton(module_name: str, module_slug: str | None, output_base_dir: s
 
     # Setup vector access
     db = TiDBSettings()
-    embedding_model = OpenAIEmbedding(model=db.embedding_model_name)
+    settings = Settings()
+    embedding_model = settings.create_embedding()
     tidb_connection_url = URL(
         "mysql+pymysql",
         username=db.username,
@@ -138,8 +138,7 @@ def build_skeleton(module_name: str, module_slug: str | None, output_base_dir: s
     os.makedirs(out_dir, exist_ok=True)
 
     # One-shot high-level outline using assistant_message prompt
-    ai = OpenAISettings()
-    agent = Agent(model=OpenAIModel(ai.writer_model))
+    agent = Agent(model=settings.ai_writer_model)
     def load_prompt(file_name: str) -> str:
         with open(os.path.join("prompts", file_name), "r", encoding="utf-8") as f:
             return f.read().strip()
@@ -213,7 +212,7 @@ def build_skeleton(module_name: str, module_slug: str | None, output_base_dir: s
     raw = getattr(outline, "content", None) or getattr(outline, "output", None) or str(outline)
     try:
         resp_preview = (raw if isinstance(raw, str) else str(raw))[:400].replace("\n", " ")
-        log.info("[highlight]Outline response preview[/]: %s%s", resp_preview, "..." if len(str(raw)) > 400 else "")
+        # log.info("[highlight]Outline response preview[/]: %s%s", resp_preview, "..." if len(str(raw)) > 400 else "")
     except Exception:
         pass
     try:
@@ -341,7 +340,7 @@ def build_skeleton(module_name: str, module_slug: str | None, output_base_dir: s
         resp2 = agent.run_sync(eval_intro_prompt)
         raw2 = getattr(resp2, "content", None) or getattr(resp2, "output", None) or str(resp2)
         resp_preview2 = (raw2 if isinstance(raw2, str) else str(raw2))[:400].replace("\n", " ")
-        log.info("[highlight]Intro/Eval response preview[/]: %s%s", resp_preview2, "..." if len(str(raw2)) > 400 else "")
+        # log.info("[highlight]Intro/Eval response preview[/]: %s%s", resp_preview2, "..." if len(str(raw2)) > 400 else "")
         try:
             parsed2 = json.loads(raw2) if isinstance(raw2, str) else raw2
         except Exception:
