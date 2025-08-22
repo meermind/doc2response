@@ -20,7 +20,9 @@ class SkeletonAgent(BaseNotesAgent):
 
     def outline_module(self, topics: List[str], slug_to_nodes: Dict[str, List[Any]]) -> Dict[str, Any]:
         self.log_stage("Outline module")
-        agent = Agent(model=self.settings.ai_writer_model)
+        use_model = self.resolve_model("skeleton")
+        self.log_model("skeleton", str(use_model))
+        agent = Agent(model=use_model)
         assistant_msg = self.load_prompt("assistant_message.txt")
         outline_context = self.build_outline_context(topics, slug_to_nodes)
         prompt = (
@@ -97,7 +99,9 @@ class SkeletonAgent(BaseNotesAgent):
 
     def finalize_intro_and_eval(self, course_name: str, intro_title: str, subsections: List[Dict[str, Any]], outline_context: str, subsection_entries: List[Dict[str, str]], eval_title: str = "Evaluation and Future Directions") -> None:
         self.log_stage("Finalize intro and evaluation")
-        agent = Agent(model=self.settings.ai_writer_model)
+        use_model = self.resolve_model("skeleton")
+        self.log_model("skeleton", str(use_model))
+        agent = Agent(model=use_model)
         prompt = (
             "You will draft two LaTeX parts for this module using the provided context excerpts.\n"
             "Return STRICT JSON (no code fences) with keys: intro_latex, evaluation_latex.\n"
@@ -120,14 +124,11 @@ class SkeletonAgent(BaseNotesAgent):
                 parsed2 = {"intro_latex": "", "evaluation_latex": ""}
             writer = LatexSectionWriter()
             assembler = LatexAssembler(self.output_base_dir, course_name, self.module_name)
-            # Intro
-            intro_path = assembler.write_intro(intro_title)
-            intro_text = writer.ensure_heading("section", intro_title, parsed2.get("intro_latex") or f"\\section{{{intro_title}}}\n")
-            with open(intro_path, 'w', encoding='utf-8') as f:
-                f.write(intro_text)
-            # Evaluation subsection
-            eval_text = writer.ensure_heading("subsection", eval_title, parsed2.get("evaluation_latex") or f"\\subsection{{{eval_title}}}\n")
-            eval_path = assembler.write_subsection(eval_title, eval_text)
+            # Intro (let writer handle sanitization + heading)
+            intro_path = assembler.paths.intro_path(intro_title)
+            writer.write_section_content(intro_title, parsed2.get("intro_latex") or f"\\section{{{intro_title}}}\n", intro_path)
+            # Evaluation subsection (pass raw; writer handles sanitization)
+            eval_path = assembler.write_subsection(eval_title, parsed2.get("evaluation_latex") or f"\\subsection{{{eval_title}}}\n")
             # Update metadata: section (order 0) + existing subsections + evaluation at the end
             sections: List[Dict[str, str]] = []
             sections.append({"order": 0, "type": "section", "title": intro_title, "path": intro_path})

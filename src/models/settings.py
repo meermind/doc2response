@@ -7,7 +7,6 @@ class Settings(BaseSettings):
     """Central application settings (env-driven).
 
     - AI_WRITER_MODEL: any pydantic-ai KnownModelName (e.g., "openai:gpt-4o", "google-gla:gemini-2.5-pro").
-    - AI_SUMMARIZER_MODEL: same typing, optional.
     - EMBEDDING_MODEL: embedding model name (optionally provider-prefixed) for embeddings, e.g., "openai:text-embedding-3-small".
     - EMBEDDING_DIMENSION: integer dimension of the embedding vector.
     - PROMPT_ASSISTANT_MESSAGE_FILE: prompt file name under prompts/
@@ -17,8 +16,14 @@ class Settings(BaseSettings):
 
     # anthropic:claude-sonnet-4-20250514
     # openai:gpt-4o"
-    ai_writer_model: KnownModelName = Field(default="openai:gpt-4o", alias="AI_WRITER_MODEL")
-    ai_summarizer_model: KnownModelName | None = Field(default=None, alias="AI_SUMMARIZER_MODEL")
+    # openai:gpt-5-mini
+    # openai:gpt-5
+    ai_writer_model: KnownModelName = Field(default="openai:gpt-5", alias="AI_WRITER_MODEL")
+
+    # Optional per-stage overrides
+    ai_skeleton_model: KnownModelName | None = Field(default="claude-sonnet-4-20250514", alias="AI_SKELETON_MODEL")
+    ai_enhancer_model: KnownModelName | None = Field(default="claude-sonnet-4-20250514", alias="AI_ENHANCER_MODEL")
+    ai_mdframe_model: KnownModelName | None = Field(default="claude-sonnet-4-20250514", alias="AI_MDFRAME_MODEL")
 
     embedding_model: str = Field(default="text-embedding-3-small", alias="EMBEDDING_MODEL")
     embedding_dimension: int = Field(default=1536, alias="EMBEDDING_DIMENSION")

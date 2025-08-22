@@ -15,21 +15,11 @@ class SubsectionEnhancerAgent(BaseNotesAgent):
     def load_skeleton(self, out_dir: str) -> List[Dict[str, Any]]:
         self.log_stage("Load skeleton")
         log = get_logger(__name__)
-        sk = self.metadata_store.load_skeleton(out_dir)
-        log.info("Looking for skeleton at: %s", os.path.join(out_dir, "skeleton.json"))
-        if sk:
-            return sk.get("subsections", []) or []
-        # Fallback: mapping
-        log.info("skeleton.json not found. Falling back to mapping: %s", os.path.join(out_dir, "subsection_mapping.json"))
-        mapping = self.metadata_store.load_mapping(out_dir)
-        if mapping:
-            normalized: List[Dict[str, Any]] = []
-            for s in mapping.get("subsections", []) or []:
-                items = s.get("items", []) or []
-                topics = [it.get("item_slug") for it in items if it.get("item_slug")]
-                normalized.append({"title": s.get("title", "Section"), "topics": topics})
-            return normalized
-        return []
+        log.info(
+            "Loading subsections from metadata at: %s",
+            MetadataStore.metadata_dir(out_dir),
+        )
+        return self.metadata_store.load_normalized_subsections(out_dir)
 
     def prepare_retrieval(self, top_k_item: int) -> Dict[str, List[Any]]:
         self.log_stage("Prepare retrieval cache")
@@ -39,7 +29,9 @@ class SubsectionEnhancerAgent(BaseNotesAgent):
         return self.build_enhance_context(topic_slugs, slug_to_nodes)
 
     def enhance_subsection(self, title: str, topic_slugs: List[str], subsection_prompt: str, slug_to_nodes: Dict[str, List[Any]]) -> str:
-        agent = Agent(model=self.settings.ai_writer_model)
+        use_model = self.resolve_model("enhancer")
+        self.log_model("enhancer", str(use_model))
+        agent = Agent(model=use_model)
         context_text = self.build_context_from_slugs(topic_slugs, slug_to_nodes)
         prompt = (
             f"{subsection_prompt}\n"
@@ -64,6 +56,7 @@ class SubsectionEnhancerAgent(BaseNotesAgent):
         sub_path = os.path.join(enhanced_dir, f"{title}.tex")
         os.makedirs(os.path.dirname(sub_path), exist_ok=True)
         writer = LatexSectionWriter()
+        # Delegate sanitization/heading to writer
         writer.write_subsection(title, out_text, sub_path)
         try:
             with open(sub_path, 'r', encoding='utf-8') as rf:
@@ -103,6 +96,7 @@ class SubsectionEnhancerAgent(BaseNotesAgent):
         os.makedirs(enhanced_dir, exist_ok=True)
 
         enhanced_any = False
+        mdframe_entries: List[Dict[str, str]] = []
         for s in subsections:
             title = s.get("title", "Section")
             topic_slugs = [t for t in (s.get("topics") or []) if t]
@@ -111,12 +105,24 @@ class SubsectionEnhancerAgent(BaseNotesAgent):
             sub_path = self.write_and_validate_subsection(enhanced_dir, title, out_text)
             log.info("Wrote enhanced subsection %s -> %s", title, sub_path)
             enhanced_any = True
+            # If the generated content references mdframe placeholders, record for mdframe stage
+            try:
+                with open(sub_path, 'r', encoding='utf-8') as rf:
+                    txt = rf.read()
+                if ("mdframe" in txt.lower()) or ("mdframed" in txt.lower()):
+                    mdframe_entries.append({"title": title, "path": sub_path, "topics": topic_slugs})
+            except Exception:
+                pass
 
         assistant_message_path = None
         if enhanced_any:
             try:
                 assistant_message_path = os.path.join(enhanced_dir, "assistant_message.tex")
                 collate_from_metadata(self.output_base_dir, self.course_name, self.module_name, assistant_message_path)
+                # Persist mdframe_skeleton.json for downstream mdframe agent
+                module_dir = self.out_dir()
+                if mdframe_entries:
+                    MetadataStore.save_mdframe_skeleton(module_dir, enhanced_dir, mdframe_entries)
             except Exception:
                 pass
         return {"assistant_message": assistant_message_path} if assistant_message_path else None

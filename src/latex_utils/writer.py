@@ -20,7 +20,7 @@ class LatexFileWriter:
     @staticmethod
     def write_subsection(title: str, content: str, path: str) -> None:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        sanitized = sanitize_latex(content)
+        sanitized = content
         if "\\subsection" not in sanitized:
             sanitized = f"\\subsection{{{title}}}\n" + sanitized
         with open(path, 'w', encoding='utf-8') as f:

@@ -1,6 +1,6 @@
 import os
 from collections import Counter
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Callable
 
 from sqlalchemy import URL
 from llama_index.core import VectorStoreIndex
@@ -62,6 +62,30 @@ class BaseNotesAgent:
         self._log = get_logger(__name__)
         self.metadata_store = metadata_store or MetadataStore()
 
+    # Model selection and logging helpers
+    def resolve_model(self, stage: str) -> str:
+        """Return the model name to use for a given stage.
+
+        Stages: "skeleton", "enhancer", "mdframe", default -> ai_writer_model
+        """
+        if stage == "skeleton":
+            return self.settings.ai_skeleton_model or self.settings.ai_writer_model
+        if stage == "enhancer":
+            return self.settings.ai_enhancer_model or self.settings.ai_writer_model
+        if stage == "mdframe":
+            return (
+                self.settings.ai_mdframe_model
+                or self.settings.ai_enhancer_model
+                or self.settings.ai_writer_model
+            )
+        return self.settings.ai_writer_model
+
+    def log_model(self, stage: str, model_name: str) -> None:
+        try:
+            self._log.info("\n[bold magenta]Model for %s[/]: %s\n", stage, model_name)
+        except Exception:
+            pass
+
     def base_filters(self) -> List[Dict[str, str]]:
         if self.module_slug:
             return [{"key": "module_slug", "value": self.module_slug, "operator": "=="}]
@@ -77,37 +101,146 @@ class BaseNotesAgent:
             embedding_model=self.embedding_model,
             filters=self.base_metadata_filters(),
         )
+
+    # Compose base filters with additional metadata filters
+    def metadata_filters_with(self, additional: Optional[List[Dict[str, str]]]) -> MetadataFilters:
+        base = self.base_filters()
+        if additional:
+            base = [*base, *additional]
+        return MetadataFilters(filters=[MetadataFilter(**f) for f in base])
+
+    def retriever_with_metadata(self, similarity_top_k: int, additional: Optional[List[Dict[str, str]]]) -> VectorIndexRetriever:
+        return VectorIndexRetriever(
+            index=self.index,
+            similarity_top_k=similarity_top_k,
+            embedding_model=self.embedding_model,
+            filters=self.metadata_filters_with(additional),
+        )
+
+    # Topic-level (item_slug) retrieval
+    def item_filters(self, item_slug: str) -> list[dict[str, str]]:
+        filters: list[dict[str, str]] = []
+        # Keep module scoping if available to reduce noise
+        if self.module_slug:
+            filters.append({"key": "module_slug", "value": self.module_slug, "operator": "=="})
+        filters.append({"key": "item_slug", "value": item_slug, "operator": "=="})
+        return filters
+
+    def item_metadata_filters(self, item_slug: str) -> MetadataFilters:
+        return MetadataFilters(filters=[MetadataFilter(**f) for f in self.item_filters(item_slug)])
+
+    def retriever_for_item(self, similarity_top_k: int, item_slug: str) -> VectorIndexRetriever:
+        return VectorIndexRetriever(
+            index=self.index,
+            similarity_top_k=similarity_top_k,
+            embedding_model=self.embedding_model,
+            filters=self.item_metadata_filters(item_slug),
+        )
+
+    def retriever_for_item_with_metadata(self, similarity_top_k: int, item_slug: str, additional: Optional[List[Dict[str, str]]]) -> VectorIndexRetriever:
+        item = self.item_filters(item_slug)
+        if additional:
+            item = [*item, *additional]
+        return VectorIndexRetriever(
+            index=self.index,
+            similarity_top_k=similarity_top_k,
+            embedding_model=self.embedding_model,
+            filters=MetadataFilters(filters=[MetadataFilter(**f) for f in item]),
+        )
     
-    def list_item_slugs(self, list_top_k: int) -> List[str]:
-        log = get_logger(__name__)
-        nodes = self.retriever(list_top_k).retrieve("List all the files")
+    def collect_slug_to_nodes(
+        self,
+        list_top_k: int,
+        retriever_factory: Optional[Callable[[int], VectorIndexRetriever]] = None,
+        include_types: Optional[set[str]] = None,
+        additional_filters: Optional[List[Dict[str, str]]] = None,
+    ) -> Dict[str, List[Any]]:
+        """Collect nodes grouped by item_slug using the provided retriever (default: self.retriever).
 
-        slugs = sorted({n.metadata.get("item_slug") for n in nodes if n.metadata.get("item_slug")})
-        counts = {s: Counter() for s in slugs}
+        include_types filters nodes by aggregated type labels: {'transcripts','extra_notes','slides'}
+        """
+        if retriever_factory:
+            retriever = retriever_factory(list_top_k)
+        else:
+            retriever = self.retriever_with_metadata(list_top_k, additional_filters)
+        nodes = retriever.retrieve("List all the files")
+        slug_to_nodes: Dict[str, List[Any]] = {}
         for n in nodes:
-            s = n.metadata.get("item_slug")
-            if not s: 
+            slug = n.metadata.get("item_slug")
+            if not slug:
                 continue
-            dt = str(n.metadata.get("doc_type") or n.metadata.get("type") or n.metadata.get("content_type") or "").lower()
-            key = "transcripts" if "transcript" in dt else "extra_notes" if ("extra" in dt or "note" in dt) else "slides" if "slide" in dt else None
-            if key and s in counts:
-                counts[s][key] += 1
+            if include_types:
+                t = self._classify_doc_type(n)
+                if (t is None) or (t not in include_types):
+                    continue
+            slug_to_nodes.setdefault(slug, []).append(n)
+        return slug_to_nodes
 
+    def collect_slug_to_nodes_for_items(
+        self,
+        item_slugs: List[str],
+        per_topic_k: int,
+        include_types: Optional[set[str]] = None,
+        additional_filters: Optional[List[Dict[str, str]]] = None,
+    ) -> Dict[str, List[Any]]:
+        """Collect nodes per item_slug using item-level retrievers, optional type filter."""
+        slug_to_nodes: Dict[str, List[Any]] = {}
+        for slug in item_slugs or []:
+            try:
+                r = self.retriever_for_item_with_metadata(per_topic_k, slug, additional_filters)
+                nodes = r.retrieve("List all the files")
+            except Exception:
+                nodes = []
+            for n in nodes:
+                if include_types:
+                    t = self._classify_doc_type(n)
+                    if (t is None) or (t not in include_types):
+                        continue
+                slug_to_nodes.setdefault(slug, []).append(n)
+        return slug_to_nodes
+
+    def list_item_slugs(
+        self,
+        list_top_k: int,
+        retriever_factory: Optional[Callable[[int], VectorIndexRetriever]] = None,
+    ) -> List[str]:
+        log = get_logger(__name__)
+        slug_to_nodes = self.collect_slug_to_nodes(list_top_k, retriever_factory)
+        self.log_item_slug_table(slug_to_nodes)
+        return sorted(slug_to_nodes.keys())
+
+    def log_item_slug_table(self, slug_to_nodes: dict[str, list]) -> None:
+        log = get_logger(__name__)
+        slugs = sorted(slug_to_nodes.keys())
         log.info(f"[cyan]Topics found[/] ({len(slugs)}):")
         cats = ("transcripts", "extra_notes", "slides")
         slug_w = (max(len("item_slug"), *(map(len, slugs))) + 2) if slugs else len("item_slug")
         header = f"{'item_slug':<{slug_w}}" + "".join(f" {c:>12}" for c in (*cats, "total"))
         log.info(header)
-
         totals = Counter()
         for s in slugs:
-            row_total = sum(counts[s][k] for k in cats)
-            for k in cats: totals[k] += counts[s][k]
+            counts = Counter()
+            for n in slug_to_nodes.get(s, []) or []:
+                key = self._classify_doc_type(n)
+                if key:
+                    counts[key] += 1
+            row_total = sum(counts[k] for k in cats)
+            for k in cats:
+                totals[k] += counts[k]
             totals["total"] += row_total
-            log.info(f"{s:<{slug_w}}" + "".join(f" {counts[s][k]:>12}" for k in cats) + f" {row_total:>12}")
-
+            log.info(f"{s:<{slug_w}}" + "".join(f" {counts[k]:>12}" for k in cats) + f" {row_total:>12}")
         log.info(f"{'TOTAL':<{slug_w}}" + "".join(f" {totals[k]:>12}" for k in cats) + f" {totals['total']:>12}")
-        return slugs
+
+    # Small shared classifier
+    def _classify_doc_type(self, node: Any) -> Optional[str]:
+        dt = str(node.metadata.get("doc_type") or node.metadata.get("type") or node.metadata.get("content_type") or "").lower()
+        if "transcript" in dt:
+            return "transcripts"
+        if ("extra" in dt) or ("note" in dt):
+            return "extra_notes"
+        if "slide" in dt:
+            return "slides"
+        return None
 
     def out_dir(self) -> str:
         return OutputPaths(base_dir=self.output_base_dir, course_name=self.course_name, module_name=self.module_name).module_dir()
@@ -181,6 +314,11 @@ class BaseNotesAgent:
     def build_enhance_context(self, topic_slugs: List[str], slug_to_nodes: Dict[str, List[Any]]) -> str:
         total_chars = int(os.getenv("D2R_ENH_SUBSECTION_CHARS", "4000"))
         per_slug_k = int(os.getenv("D2R_RAG_TOP_K_ITEM", "2"))
+        return self.build_context(topic_slugs, slug_to_nodes, total_chars, per_slug_k)
+
+    def build_mdframe_context(self, topic_slugs: List[str], slug_to_nodes: Dict[str, List[Any]]) -> str:
+        total_chars = int(os.getenv("D2R_MDFRAME_CONTEXT_CHARS", "3000"))
+        per_slug_k = int(os.getenv("D2R_RAG_TOP_K_MDFRAME", "1"))
         return self.build_context(topic_slugs, slug_to_nodes, total_chars, per_slug_k)
 
 

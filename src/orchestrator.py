@@ -7,8 +7,10 @@ import shutil
 from dotenv import load_dotenv
 from src.models.metadata import load_course_metadata
 from src.logger import configure_logging, get_logger
+from src.latex_utils.metadata_store import MetadataStore
 from src.agents.skeleton_agent import SkeletonAgent
 from src.agents.enhancer_agent import SubsectionEnhancerAgent
+from src.agents.mdframe_agent import MdframeAgent
 
 # Load environment variables and logging
 load_dotenv()
@@ -86,7 +88,24 @@ def run_generate_latex(course, module, module_name, input_base_dir=None, overwri
     else:
         execute(course, module, module_name, overwrite=overwrite, assistant_message_path=assistant_message_path)
 
-def orchestrate_pipeline(run_load=True, run_generate=True, metadata_file=None, topic_number=None, overwrite=False, run_skeleton=None, run_enhance=None):
+def _resolve_assistant_message_path(course: str, module_name: str, prefer_enhanced: bool = True, base_dir: str | None = None) -> str | None:
+    """Deterministically resolve assistant_message.tex path from disk.
+
+    If prefer_enhanced is True and an enhanced assistant_message exists,
+    return that; otherwise fall back to the root assistant_message.
+    """
+    out_base = base_dir or os.getenv("D2R_OUTPUT_BASE") or "assistant_latex"
+    module_dir = MetadataStore.module_dir(out_base, course, module_name)
+    enhanced_path = os.path.join(module_dir, "enhanced", "assistant_message.tex")
+    root_path = os.path.join(module_dir, "assistant_message.tex")
+    if prefer_enhanced and os.path.exists(enhanced_path):
+        return enhanced_path
+    if os.path.exists(root_path):
+        return root_path
+    return None
+
+
+def orchestrate_pipeline(run_load=True, run_generate=True, metadata_file=None, topic_number=None, overwrite=False, run_skeleton=None, run_enhance=None, run_mdframe: bool = False):
     """
     Orchestrate the pipeline based on the provided flags.
 
@@ -202,11 +221,25 @@ def orchestrate_pipeline(run_load=True, run_generate=True, metadata_file=None, t
             if do_enhance:
                 enhance_out = run_enhance_subsections(course, module_name, module_slug=module_slug)
 
-            # Prefer enhanced assistant_message if present, else skeleton
+            # Prefer enhanced assistant_message from current run; else skeleton
             assistant_message = (
                 (enhance_out or {}).get("assistant_message")
                 or (skeleton_out or {}).get("assistant_message")
             )
+
+            # Optionally run mdframe agent. When requested, always target the on-disk enhanced
+            # outputs if available; else fall back to skeleton assistant_message.
+            if run_mdframe:
+                resolved_path = _resolve_assistant_message_path(course, module_name, prefer_enhanced=True)
+                assistant_for_md = resolved_path or assistant_message
+                if assistant_for_md:
+                    md_agent = MdframeAgent(course_name=course, module_name=module_name, module_slug=module_slug)
+                    md_out = md_agent.run(assistant_message_path=assistant_for_md)
+                    if md_out and md_out.get("assistant_message"):
+                        assistant_message = md_out["assistant_message"]
+                else:
+                    log.info("[yellow]No assistant_message found on disk; skipping mdframe agent.")
+            # Note: mdframe is opt-in and runs only when --mdframe is provided
 
             if run_generate:
                 run_generate_latex(course, module, module_name, overwrite=overwrite, assistant_message_path=assistant_message)
@@ -225,11 +258,14 @@ if __name__ == "__main__":
     parser.add_argument("--skip_skeleton", action="store_true", help="Skip building the skeleton step")
     # Enhancement control: off by default; enable with --enhance
     parser.add_argument("--enhance", action="store_true", help="Run subsection enhancement (costly)")
+    # Mdframe pass: when set, run the mdframe agent against enhanced outputs (if present)
+    parser.add_argument("--mdframe", action="store_true", help="Run mdframe agent using enhanced outputs if available")
     args = parser.parse_args()
 
     # Determine skeleton/enhance behavior
     run_skeleton_flag = not args.skip_skeleton
     run_enhance_flag = bool(args.enhance)
+    run_mdframe_flag = bool(args.mdframe)
 
     orchestrate_pipeline(
         run_load=not args.skip_load,
@@ -239,4 +275,5 @@ if __name__ == "__main__":
         overwrite=bool(args.overwrite or os.getenv("D2R_OVERWRITE", "0") == "1"),
         run_skeleton=run_skeleton_flag,
         run_enhance=run_enhance_flag,
+        run_mdframe=run_mdframe_flag,
     )

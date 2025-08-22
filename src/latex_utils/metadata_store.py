@@ -14,6 +14,7 @@ class MetadataStore:
         with open(metadata_path, 'r', encoding='utf-8') as f:
             meta = _json.load(f)
         sections = meta.get('sections', [])
+        mdframed_dir = os.path.join(module_dir, 'mdframed')
         enhanced_dir = os.path.join(module_dir, 'enhanced')
         # Prefer enhanced subsection file if present
         for s in sections:
@@ -21,9 +22,13 @@ class MetadataStore:
             if not p:
                 continue
             if s.get('type') == 'subsection':
-                candidate = os.path.join(enhanced_dir, os.path.basename(p))
-                if os.path.exists(candidate):
-                    s['path'] = candidate
+                # Prefer mdframed over enhanced over original
+                candidate_md = os.path.join(mdframed_dir, os.path.basename(p))
+                candidate_enh = os.path.join(enhanced_dir, os.path.basename(p))
+                if os.path.exists(candidate_md):
+                    s['path'] = candidate_md
+                elif os.path.exists(candidate_enh):
+                    s['path'] = candidate_enh
         # Find intro (first section)
         intro_path = ""
         for s in sections:
@@ -40,6 +45,33 @@ class MetadataStore:
         meta_path = os.path.join(meta_dir, "metadata.json")
         with open(meta_path, 'w', encoding='utf-8') as f:
             _json.dump({"sections": sections}, f, indent=2)
+
+    @staticmethod
+    def mdframe_skeleton_path(module_dir: str) -> str:
+        return os.path.join(MetadataStore.metadata_dir(module_dir), "mdframe_skeleton.json")
+
+    @staticmethod
+    def save_mdframe_skeleton(module_dir: str, root_path: str, entries: List[Dict[str, str]]) -> str:
+        import json as _json
+        meta_dir = MetadataStore.metadata_dir(module_dir)
+        os.makedirs(meta_dir, exist_ok=True)
+        path = MetadataStore.mdframe_skeleton_path(module_dir)
+        payload = {"root_path": root_path, "entries": entries}
+        with open(path, 'w', encoding='utf-8') as f:
+            _json.dump(payload, f, indent=2)
+        return path
+
+    @staticmethod
+    def load_mdframe_skeleton(module_dir: str) -> Dict[str, any]:
+        import json as _json
+        path = MetadataStore.mdframe_skeleton_path(module_dir)
+        if not os.path.exists(path):
+            return {}
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                return _json.load(f)
+        except Exception:
+            return {}
 
     @staticmethod
     def module_dir(base_dir: str, course: str, module_name: str) -> str:
@@ -93,5 +125,36 @@ class MetadataStore:
             return {}
         with open(path, 'r', encoding='utf-8') as f:
             return _json.load(f)
+
+    @staticmethod
+    def load_normalized_subsections(out_dir: str) -> List[Dict[str, any]]:
+        """
+        Load subsections from skeleton if available, else fall back to mapping.
+        Returns a normalized list of dicts: {"title": str, "topics": List[str]}.
+        """
+        # Prefer skeleton.json if present
+        skeleton = MetadataStore.load_skeleton(out_dir)
+        if skeleton:
+            subsections = skeleton.get("subsections", []) or []
+            normalized: List[Dict[str, any]] = []
+            for s in subsections:
+                title = s.get("title", "Section")
+                topics = [t for t in (s.get("topics") or []) if t]
+                normalized.append({"title": title, "topics": topics})
+            if normalized:
+                return normalized
+
+        # Fallback to subsection_mapping.json if skeleton is absent/empty
+        mapping = MetadataStore.load_mapping(out_dir)
+        if mapping:
+            normalized = []
+            for s in mapping.get("subsections", []) or []:
+                items = s.get("items", []) or []
+                topics = [it.get("item_slug") for it in items if it.get("item_slug")]
+                normalized.append({"title": s.get("title", "Section"), "topics": topics})
+            if normalized:
+                return normalized
+
+        return []
 
 

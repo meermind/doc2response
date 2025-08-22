@@ -15,13 +15,14 @@ class LatexSanitizer:
             text = _re.sub(r"(?m)^[ \t]*latex[ \t]*$", "", text)
             # Convert accidental html-like mdframed tags
             text = text.replace("<mdframed>", "\\begin{mdframed}").replace("</mdframed>", "\\end{mdframed}")
-            # Common command typos
-            text = _re.sub(r"(?<!\\)extbf\{", r"\\textbf{", text)
-            text = _re.sub(r"(?<!\\)extit\{", r"\\textit{", text)
+            # Common command typos (handle bare and mis-escaped forms, allow spaces)
+            text = _re.sub(r"(?<!\\)extbf\s*\{", r"\\textbf{", text)
+            text = _re.sub(r"\\extbf\s*\{", r"\\textbf{", text)
+            text = _re.sub(r"(?<!\\)extit\s*\{", r"\\textit{", text)
+            text = _re.sub(r"\\extit\s*\{", r"\\textit{", text)
             text = _re.sub(r"(?<!\\)textrightarrow", r"\\rightarrow", text)
-            text = _re.sub(r"(?<!\\)imes\b", r"\\times", text)
-            # Remove stray \t macro if not used with braces (invalid in our outputs)
-            text = _re.sub(r"\\t(?!\{)", " ", text)
+            # Remove stray \t macro only when not starting a real command (avoid stripping '\\textbf')
+            text = _re.sub(r"\\t(?![A-Za-z])", " ", text)
             # Unicode and common symbols
             replacements = {
                 "π": "\\pi", "−": "-", "μ": "\\mu", "σ": "\\sigma", "ρ": "\\rho",
@@ -41,21 +42,36 @@ class LatexSanitizer:
                 out = []
                 for line in s.splitlines():
                     if ("$" not in line) and ("\\(" not in line) and ("\\[" not in line):
-                        line = line.replace("_", "\\_")
+                        # Avoid double-escaping underscores already escaped
+                        # Replace single underscores not preceded by a backslash
+                        import re as _re_inner
+                        line = _re_inner.sub(r"(?<!\\)_", r"\\_", line)
                     out.append(line)
                 return "\n".join(out)
             text = _escape_underscores(text)
-            # Escape stray & outside common environments (simple heuristic)
+            # Escape stray & everywhere except in alignment/table environments
             def _escape_ampersands(s: str) -> str:
-                out_lines = []
-                env_depth = 0
-                for line in s.splitlines():
-                    if "\\begin{" in line:
-                        env_depth += 1
-                    if env_depth == 0:
+                out_lines: List[str] = []
+                env_stack: List[str] = []
+                begin_re = _re.compile(r"\\begin\{([^}]+)\}")
+                end_re = _re.compile(r"\\end\{([^}]+)\}")
+                allowed_amp_envs = {
+                    "tabular", "tabularx", "array",
+                    "align", "align*", "aligned", "alignedat",
+                    "split", "gather", "gather*", "flalign", "flalign*", "alignat"
+                }
+                for raw in s.splitlines():
+                    line = raw
+                    # Track environment stack
+                    for m in begin_re.finditer(line):
+                        env_stack.append(m.group(1))
+                    for m in end_re.finditer(line):
+                        if env_stack and env_stack[-1] == m.group(1):
+                            env_stack.pop()
+                    # Decide whether to escape & on this line
+                    in_allowed = any(env in allowed_amp_envs for env in env_stack)
+                    if not in_allowed:
                         line = _re.sub(r"(?<!\\)&", r"\\&", line)
-                    if "\\end{" in line and env_depth > 0:
-                        env_depth -= 1
                     out_lines.append(line)
                 return "\n".join(out_lines)
             text = _escape_ampersands(text)
@@ -100,6 +116,25 @@ class LatexSanitizer:
                     out.append(lines[i]); i += 1
                 return "\n".join(out)
             text = _wrap_lonely_items(text)
+            # Heuristic: flatten nested itemize/enumerate directly nested without text between
+            def _flatten_nested_lists(s: str) -> str:
+                # Remove redundant immediate nested begin/end pairs
+                s = _re.sub(r"(?s)\\begin\{itemize\}\s*\\begin\{itemize\}", r"\\begin{itemize}", s)
+                s = _re.sub(r"(?s)\\end\{itemize\}\s*\\end\{itemize\}", r"\\end{itemize}", s)
+                s = _re.sub(r"(?s)\\begin\{enumerate\}\s*\\begin\{enumerate\}", r"\\begin{enumerate}", s)
+                s = _re.sub(r"(?s)\\end\{enumerate\}\s*\\end\{enumerate\}", r"\\end{enumerate}", s)
+                return s
+            text = _flatten_nested_lists(text)
+            # Replace \\times outside math with literal 'x'
+            def _times_outside_math(s: str) -> str:
+                out = []
+                for line in s.splitlines():
+                    if ("$" in line) or ("\\(" in line) or ("\\[" in line):
+                        out.append(line)
+                    else:
+                        out.append(line.replace("\\times", "x"))
+                return "\n".join(out)
+            text = _times_outside_math(text)
             return text.strip()
         except Exception:
             return text
