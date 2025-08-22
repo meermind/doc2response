@@ -119,6 +119,27 @@ class SectionContent(BaseModel):
         pattern = re.compile(r"\\(" + r"|".join(math_cmds) + r")\b")
         if pattern.search(outside_math):
             raise ValueError("math macro used outside math mode; wrap with $...$ or \\( ... \\)")
+
+        # Detect misplaced alignment tab & outside alignment/table environments
+        def _strip_env(s: str, envs: list[str]) -> str:
+            for env in envs:
+                s = re.sub(rf"\\begin\{{{env}\}}[\s\S]*?\\end\{{{env}\}}", " ", s)
+            return s
+        alignment_envs = [
+            "tabular", "tabularx", "array", "tabu", "align", "aligned", "alignat",
+            "eqnarray", "split", "matrix", "pmatrix", "bmatrix", "vmatrix", "Vmatrix", "cases", "tabbing"
+        ]
+        check_text = _strip_env(outside_math, alignment_envs)
+        if re.search(r"(?<!\\)&", check_text):
+            raise ValueError("misplaced alignment tab character &: escape as \\& or use a table/alignment environment")
+
+        # Guard against raw 'mdframe suggestions' marker lines
+        if re.search(r"(?mi)^mdframe suggestions", txt):
+            raise ValueError("raw 'mdframe suggestions' marker present; remove or comment it out")
+
+        # Disallow textrightarrow outside math
+        if re.search(r"(?<!\\)textrightarrow", outside_math):
+            raise ValueError("use \\rightarrow inside math, not textrightarrow outside math")
         return self
 
 

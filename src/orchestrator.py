@@ -3,6 +3,7 @@ import sys
 import subprocess
 import json
 import argparse
+import shutil
 from dotenv import load_dotenv
 from src.models.metadata import load_course_metadata
 from src.logger import configure_logging, get_logger
@@ -192,13 +193,15 @@ def orchestrate_pipeline(run_load=True, run_call=True, run_generate=True, metada
             return
 
         try:
+            # Overwrite behavior is handled within writer/merger modules that know exact paths
+
             if run_load:
                 run_load_docs(metadata_file, module_index, overwrite=overwrite)
             # Determine two-phase flags
-            # Default now: build skeleton only; enhancer is disabled unless explicitly enabled
+            # Skeleton: default follows call step unless explicitly skipped via CLI
             do_skeleton = run_skeleton if run_skeleton is not None else bool(run_call)
-            enhancer_enabled = os.getenv("D2R_ENABLE_ENHANCER", "0") == "1"
-            do_enhance = run_enhance if run_enhance is not None else (bool(run_call) and enhancer_enabled)
+            # Enhancement: off by default; enable only when explicitly requested via CLI flag
+            do_enhance = bool(run_enhance)
             if not do_enhance:
                 log.info("[yellow]Enhancer disabled[/] (set D2R_ENABLE_ENHANCER=1 or pass run_enhance=True to enable)")
             if do_skeleton:
@@ -219,7 +222,15 @@ if __name__ == "__main__":
     parser.add_argument("--skip_load", action="store_true", help="Skip load docs step")
     parser.add_argument("--skip_call", action="store_true", help="Skip LLM call step")
     parser.add_argument("--skip_generate", action="store_true", help="Skip LaTeX generation step")
+    # Skeleton control (same style as the others): skip if flag present
+    parser.add_argument("--skip_skeleton", action="store_true", help="Skip building the skeleton step")
+    # Enhancement control: off by default; enable with --enhance
+    parser.add_argument("--enhance", action="store_true", help="Run subsection enhancement (costly)")
     args = parser.parse_args()
+
+    # Determine skeleton/enhance behavior
+    run_skeleton_flag = not args.skip_skeleton
+    run_enhance_flag = bool(args.enhance)
 
     orchestrate_pipeline(
         run_load=not args.skip_load,
@@ -228,4 +239,6 @@ if __name__ == "__main__":
         metadata_file=args.metadata_file,
         topic_number=args.topic_number,
         overwrite=bool(args.overwrite or os.getenv("D2R_OVERWRITE", "0") == "1"),
+        run_skeleton=run_skeleton_flag,
+        run_enhance=run_enhance_flag,
     )

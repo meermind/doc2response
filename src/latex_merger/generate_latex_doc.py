@@ -1,6 +1,7 @@
 import argparse
 import os
 import json
+import shutil
 from src.logger import configure_logging, get_logger
 from src.models.latex import LatexMetadata, SectionRef, SectionContent
 from src.models.paths import OutputPaths
@@ -62,7 +63,21 @@ def execute(course, module, module_name, input_base_dir=None, overwrite: bool | 
     for section in sorted_sections:
         log.info(f"[cyan]Processing[/] {section['type']}: {section['title']}")
 
-        with open(section['path'], 'r') as file:
+        # Prefer enhanced version if present and newer
+        enhanced_path = None
+        try:
+            base_dir_for_sec = os.path.dirname(section['path'])
+            enhanced_dir = os.path.join(base_dir_for_sec, 'enhanced')
+            candidate = os.path.join(enhanced_dir, os.path.basename(section['path']))
+            if os.path.exists(candidate):
+                enhanced_path = candidate
+        except Exception:
+            enhanced_path = None
+
+        chosen_path = enhanced_path or section['path']
+        if enhanced_path:
+            log.info(f"[success]Using enhanced[/]: {os.path.basename(chosen_path)}")
+        with open(chosen_path, 'r') as file:
             content = file.read()
         # Validate each section's content; self-heal known issues
         try:
@@ -135,6 +150,30 @@ def execute(course, module, module_name, input_base_dir=None, overwrite: bool | 
                         esc.append(line)
                     return "\n".join(esc)
                 healed = _escape_underscores(healed)
+
+                # Fix missing backslash in \textbf occurrences produced as 'extbf{'
+                healed = _re.sub(r"(?<!\\)extbf\{", r"\\textbf{", healed)
+                # Remove literal tabs and stray 'latex' lines
+                healed = healed.replace("\t", " ")
+                healed = _re.sub(r"\\t\s*", " ", healed)
+                healed = _re.sub(r"(?m)^[ \t]*latex[ \t]*$", "", healed)
+
+                # Escape stray & characters outside alignment/table environments
+                def _escape_misplaced_ampersands(s: str) -> str:
+                    # Very simple heuristic: process line by line; skip lines that look like tabular/array rows
+                    out_lines = []
+                    env_depth = 0
+                    for line in s.splitlines():
+                        if "\\begin{" in line:
+                            env_depth += 1
+                        if env_depth == 0:
+                            # replace & not preceded by backslash
+                            line = _re.sub(r"(?<!\\)&", r"\\&", line)
+                        if "\\end{" in line and env_depth > 0:
+                            env_depth -= 1
+                        out_lines.append(line)
+                    return "\n".join(out_lines)
+                healed = _escape_misplaced_ampersands(healed)
             except Exception:
                 pass
             # Additional sanitization: unicode math, mdframed tags, missing headings, and code fences
@@ -154,11 +193,22 @@ def execute(course, module, module_name, input_base_dir=None, overwrite: bool | 
                         "∫": "\\int",
                         "∈": "\\in",
                         "√": "\\sqrt{}",
+                        "∞": "\\infty",
                     }
                     for k, v in rep.items():
                         s = s.replace(k, v)
                     return s
                 healed = _sanitize_unicode(healed)
+                # Remove combining macron if present (often stray): U+0304
+                healed = healed.replace("\u0304", "")
+                # Fix common command typos/missing backslashes and bad tokens
+                healed = _re.sub(r"(?<!\\)textrightarrow", r"\\rightarrow", healed)
+                healed = _re.sub(r"(?<!\\)imes", r"\\times", healed)
+                healed = healed.replace("\t", " ")
+                healed = healed.replace("\u0009", " ")
+                healed = _re.sub(r"p\{\s*([0-9.]+)\s*extwidth\s*\}", r"p{\1\\textwidth}", healed)
+                healed = _re.sub(r"(?m)^\s*oindent", r"\\noindent", healed)
+                healed = _re.sub(r"(?mi)^mdframe suggestions.*$", r"% mdframe suggestions", healed)
                 # Convert accidental html-like mdframed tags
                 healed = healed.replace("<mdframed>", "\\begin{mdframed}").replace("</mdframed>", "\\end{mdframed}")
                 # Strip accidental code fences
@@ -193,7 +243,14 @@ def execute(course, module, module_name, input_base_dir=None, overwrite: bool | 
     # Check if the output file already exists
     if overwrite is None:
         overwrite = bool(os.getenv('D2R_OVERWRITE', '0') == '1')
-    if os.path.exists(output_filepath):
+    module_output_dir = os.path.join(save_path, designer_folder)
+    if overwrite and os.path.isdir(module_output_dir):
+        try:
+            shutil.rmtree(module_output_dir)
+            log.info(f"[yellow]Cleared merged output[/]: {module_output_dir}")
+        except Exception as e:
+            log.warning(f"Could not clear merged output {module_output_dir}: {e}")
+    elif os.path.exists(output_filepath):
         if not overwrite:
             ans = input(f"File {output_filepath} already exists. Do you want to overwrite? (y/n): ")
             if ans.lower() != 'y':

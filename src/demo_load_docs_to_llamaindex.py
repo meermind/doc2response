@@ -120,6 +120,19 @@ def main(metadata_file=None, topic_number=None, project_dir=None, overwrite: boo
     # Load documents for a specific module based on metadata content paths
     documents = transcripts_to_docs(None, metadata_file, topic_number=topic_number, project_dir=project_dir)
 
+    # Log summary of documents by type
+    try:
+        import json as _json
+        type_counts = {}
+        for d in documents:
+            t = (d.metadata or {}).get("type", "unknown")
+            type_counts[t] = type_counts.get(t, 0) + 1
+        total_docs = len(documents)
+        logger.info("Loaded %d documents before indexing. Type summary: %s", total_docs, _json.dumps(type_counts))
+        logger.info("Note: the vector table row count reflects chunked nodes, not input documents; expect a larger number in TiDB.")
+    except Exception:
+        pass
+
     # Extract module_name from documents
     if not documents or "module_name" not in documents[0].metadata:
         logger.error("Error: Could not extract module_name from documents.")

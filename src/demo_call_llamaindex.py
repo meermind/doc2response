@@ -6,6 +6,7 @@ import json
 import logging
 import sys
 from typing import List, Dict
+import shutil
 from sqlalchemy import URL
 from pydantic import BaseModel
 from pydantic_ai import Agent, RunContext
@@ -60,6 +61,11 @@ def main(args=None):
         help="Base directory where LaTeX outputs are written (default: assistant_latex or $OUTPUT_BASE_DIR/$D2R_OUTPUT_BASE)",
     )
     parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="If set, clear the module output directory before writing.",
+    )
+    parser.add_argument(
         "--test",
         action="store_true",
         help="Enable low-cost test mode (limit retrieval and optionally truncate context).",
@@ -84,6 +90,7 @@ def main(args=None):
     per_item_mode = bool(cli_args.per_item)
     module_slug_arg = cli_args.module_slug
     phase = cli_args.phase
+    overwrite = bool(cli_args.overwrite or os.getenv("D2R_OVERWRITE", "0") == "1")
     context = CourseContext(
         course_name=os.getenv("COURSE_NAME", "Course"),
         module_name=module_name,
@@ -242,6 +249,12 @@ def main(args=None):
     module_name_out = info.get("module_name", module_name)
 
     out_dir = OutputPaths(base_dir=context.output_base, course_name=course_name, module_name=module_name_out).module_dir()
+    if overwrite and os.path.isdir(out_dir):
+        try:
+            shutil.rmtree(out_dir)
+            log.info(f"[yellow]Cleared writer output[/]: {out_dir}")
+        except Exception as e:
+            log.warning(f"Could not clear writer output {out_dir}: {e}")
     os.makedirs(out_dir, exist_ok=True)
 
     # Skeleton (outline) + Enhancement separation
