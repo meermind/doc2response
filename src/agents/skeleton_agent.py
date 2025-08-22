@@ -4,80 +4,25 @@ from typing import Dict, Any, List
 
 from pydantic_ai import Agent
 from src.agents.base_notes_agent import BaseNotesAgent
-from src.latex_utils.writer import write_intro_file, write_subsection_file
-from src.models.latex import LatexMetadata, SectionRef
+from src.latex_utils.writer import collate_from_metadata, LatexAssembler, LatexSectionWriter
 from src.models.paths import OutputPaths
-from src.logger import get_logger
 
 
 class SkeletonAgent(BaseNotesAgent):
 
-    def _load_prompt(self, file_name: str) -> str:
-        with open(os.path.join("prompts", file_name), "r", encoding="utf-8") as f:
-            return f.read().strip()
-
-    def run(self, list_top_k: int, course_name: str) -> dict:
-        log = get_logger(__name__)
-
-        # Discover topics and build nodes cache
-        log.info("[lowlight]Retrieval query[/]: 'List all the files'")
+    # Story-style steps
+    def discover_topics(self, list_top_k: int) -> Dict[str, Any]:
+        self.log_stage("Discover topics")
         topics = self.list_item_slugs(list_top_k)
-        source_nodes = self.retriever(list_top_k).retrieve("List all the files")
-        slug_to_nodes: Dict[str, List[Any]] = {}
-        for n in source_nodes:
-            slug = n.metadata.get("item_slug")
-            if not slug:
-                continue
-            slug_to_nodes.setdefault(slug, []).append(n)
+        slug_to_nodes = self.build_slug_to_nodes(list_top_k)
+        return {"topics": topics, "slug_to_nodes": slug_to_nodes}
 
-        # Persist topics
-        module_name_out = self.module_name
-        out_dir = self.out_dir()
-        os.makedirs(out_dir, exist_ok=True)
-        try:
-            topics_cache_path = os.path.join(self.output_base_dir, course_name, module_name_out, "unique_topics.json")
-            os.makedirs(os.path.dirname(topics_cache_path), exist_ok=True)
-            with open(topics_cache_path, "w") as f:
-                json.dump({"module": module_name_out, "unique_topics": topics}, f, indent=2)
-        except Exception:
-            pass
-
-        # Outline using assistant_message prompt
+    def outline_module(self, topics: List[str], slug_to_nodes: Dict[str, List[Any]]) -> Dict[str, Any]:
+        self.log_stage("Outline module")
         agent = Agent(model=self.settings.ai_writer_model)
-        assistant_msg = self._load_prompt("assistant_message.txt")
-
-        # Build lightweight context from discovered topic slugs
-        def build_context_from_topics(topic_slugs: List[str]) -> str:
-            import textwrap
-            ctx_chars = int(os.getenv("D2R_SKELETON_CONTEXT_CHARS", "4000"))
-            per_topic_k = int(os.getenv("D2R_RAG_TOP_K_SKELETON", "1"))
-            budget = ctx_chars
-            chunks: List[str] = []
-            for slug in topic_slugs:
-                if budget <= 0:
-                    break
-                nodes = slug_to_nodes.get(slug, [])
-                take = 0
-                for n in nodes:
-                    if take >= per_topic_k:
-                        break
-                    try:
-                        t = n.get_text() if hasattr(n, "get_text") else getattr(n, "text", "")
-                    except Exception:
-                        t = ""
-                    if not t:
-                        continue
-                    snippet = t.strip()
-                    if len(snippet) > budget:
-                        snippet = snippet[:budget]
-                    if snippet:
-                        chunks.append(f"[TOPIC {slug}]\n" + textwrap.shorten(snippet, width=len(snippet)))
-                        budget -= len(snippet)
-                        take += 1
-            return "\n\n".join(chunks)
-
-        outline_context = build_context_from_topics(topics)
-        outline_prompt = (
+        assistant_msg = self.load_prompt("assistant_message.txt")
+        outline_context = self.build_outline_context(topics, slug_to_nodes)
+        prompt = (
             f"{assistant_msg}\n\n"
             "Task: Propose a comprehensive outline for the module. Use subsubsections to avoid too many top-level subsections.\n"
             "Your response MUST be STRICT JSON (no code fences, no prose) with this exact shape:\n"
@@ -94,17 +39,20 @@ class SkeletonAgent(BaseNotesAgent):
             "Context (excerpts; summarize, do not copy verbatim):\n"
             f"{outline_context}"
         )
-        outline = agent.run_sync(outline_prompt)
+        outline = agent.run_sync(prompt)
         raw = getattr(outline, "content", None) or getattr(outline, "output", None) or str(outline)
         try:
             parsed: Dict[str, Any] = json.loads(raw) if isinstance(raw, str) else raw
         except Exception:
             parsed = {"intro_title": "Introduction", "subsections": [{"title": t, "topics": [t]} for t in topics]}
-        intro_title = parsed.get("intro_title") or "Introduction"
-        subsections = parsed.get("subsections") or []
+        return parsed
 
-        # Build mapping from topics arrays
-        available_slugs = set(topics)
+    def _build_subsection_mapping(
+        self,
+        subsections: List[Dict[str, Any]],
+        available_slugs: set,
+        slug_to_nodes: Dict[str, List[Any]],
+    ) -> Dict[str, Any]:
         def lookup_item(slug: str) -> Dict[str, str]:
             nodes = slug_to_nodes.get(slug, [])
             for n in nodes:
@@ -118,17 +66,12 @@ class SkeletonAgent(BaseNotesAgent):
             return {"course_slug": "", "module_slug": self.module_slug or "", "lesson_slug": "", "item_slug": slug}
 
         mapping: Dict[str, Any] = {"subsections": []}
-        titles: List[str] = []
-        eval_title = "Evaluation and Future Directions"
-        for s in subsections:
+        for s in subsections or []:
             title = s.get("title", "Section")
-            titles.append(title)
-            if title.strip().lower() == eval_title.lower():
-                continue
             slugs = [t for t in (s.get("topics") or []) if t]
             items = [lookup_item(t) for t in slugs if t in available_slugs]
             missing = [t for t in slugs if t not in available_slugs]
-            entry = {"title": title, "items": items, "missing_topics": missing}
+            entry: Dict[str, Any] = {"title": title, "items": items, "missing_topics": missing}
             ss_list = []
             for ss in (s.get("subsubsections") or []):
                 ss_title = ss.get("title", "Subsection")
@@ -139,74 +82,130 @@ class SkeletonAgent(BaseNotesAgent):
             if ss_list:
                 entry["subsubsections"] = ss_list
             mapping["subsections"].append(entry)
-        with open(os.path.join(out_dir, "subsection_mapping.json"), "w") as f:
-            json.dump(mapping, f, indent=2)
+        return mapping
 
-        # Create .tex files and metadata.json
-        sections: List[SectionRef] = []
-        paths = OutputPaths(base_dir=self.output_base_dir, course_name=course_name, module_name=module_name_out)
-        intro_path = paths.intro_path(intro_title)
-        os.makedirs(os.path.dirname(intro_path), exist_ok=True)
-        write_intro_file(intro_title, intro_path)
-        sections.append(SectionRef(order=0, type="section", title=intro_title, path=intro_path))
+    def build_and_write_mapping(self, subsections: List[Dict[str, Any]], topics: List[str], slug_to_nodes: Dict[str, List[Any]], out_dir: str) -> None:
+        mapping = self._build_subsection_mapping(subsections, set(topics), slug_to_nodes)
+        self.write_json(mapping, os.path.join(out_dir, "subsection_mapping.json"))
 
-        eval_path = None
+    def write_subsections(self, course_name: str, subsections: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+        assembler = LatexAssembler(self.output_base_dir, course_name, self.module_name)
+        entries: List[Dict[str, str]] = []
         for i, s in enumerate(subsections, start=1):
             title = s.get("title", "Section")
-            sub_path = paths.subsection_path(title)
-            os.makedirs(os.path.dirname(sub_path), exist_ok=True)
             summary_latex = s.get("summary_latex") or f"\\subsection{{{title}}}\n"
-            write_subsection_file(title, summary_latex, sub_path)
-            sections.append(SectionRef(order=i, type="subsection", title=title, path=sub_path))
-            if title.strip().lower() == eval_title.lower():
-                eval_path = sub_path
+            sub_path = assembler.write_subsection(title, summary_latex)
+            entries.append({"order": i, "type": "subsection", "title": title, "path": sub_path})
+        return entries
 
-        meta = LatexMetadata(sections=sections)
-        with open(os.path.join(out_dir, "metadata.json"), "w") as f:
-            json.dump(meta.model_dump(), f, indent=2)
-
-        # Second agent query: final intro/eval
+    def finalize_intro_and_eval(self, course_name: str, intro_title: str, subsections: List[Dict[str, Any]], outline_context: str, subsection_entries: List[Dict[str, str]], eval_title: str = "Evaluation and Future Directions") -> None:
+        self.log_stage("Finalize intro and evaluation")
+        agent = Agent(model=self.settings.ai_writer_model)
+        prompt = (
+            "You will draft two LaTeX parts for this module using the provided context excerpts.\n"
+            "Return STRICT JSON (no code fences) with keys: intro_latex, evaluation_latex.\n"
+            "Requirements:\n"
+            "- intro_latex MUST be a single \\section with narrative text only; do NOT include any other \\subsection headings.\n"
+            "- evaluation_latex MUST be a single \\subsection titled 'Evaluation and Future Directions' with concise bullets and short narrative, referring to the actual subsection titles.\n"
+            f"Module: {self.module_name}\n"
+            f"Intro title: {intro_title}\n"
+            f"Evaluation title: {eval_title}\n"
+            f"Subsections (titles): {[s.get('title') for s in subsections]}\n"
+            "Context (excerpts; summarize, do not copy verbatim):\n"
+            f"{outline_context}"
+        )
         try:
-            eval_intro_prompt = (
-                "You will draft two LaTeX parts for this module using the provided context excerpts.\n"
-                "Return STRICT JSON (no code fences) with keys: intro_latex, evaluation_latex.\n"
-                "Requirements:\n"
-                "- intro_latex MUST be a single \\section with narrative text only; do NOT include any other \\subsection headings.\n"
-                "- evaluation_latex MUST be a single \\subsection titled 'Evaluation and Future Directions' with concise bullets and short narrative, referring to the actual subsection titles.\n"
-                f"Module: {self.module_name}\n"
-                f"Intro title: {intro_title}\n"
-                f"Evaluation title: {eval_title}\n"
-                f"Subsections (titles): {[s.get('title') for s in subsections]}\n"
-                "Context (excerpts; summarize, do not copy verbatim):\n"
-                f"{outline_context}"
-            )
-            resp2 = agent.run_sync(eval_intro_prompt)
+            resp2 = agent.run_sync(prompt)
             raw2 = getattr(resp2, "content", None) or getattr(resp2, "output", None) or str(resp2)
             try:
                 parsed2 = json.loads(raw2) if isinstance(raw2, str) else raw2
             except Exception:
                 parsed2 = {"intro_latex": "", "evaluation_latex": ""}
-            intro_latex_final = parsed2.get("intro_latex") or f"\\section{{{intro_title}}}\n"
-            evaluation_latex_final = parsed2.get("evaluation_latex") or f"\\subsection{{{eval_title}}}\n"
+            writer = LatexSectionWriter()
+            assembler = LatexAssembler(self.output_base_dir, course_name, self.module_name)
+            # Intro
+            intro_path = assembler.write_intro(intro_title)
+            intro_text = writer.ensure_heading("section", intro_title, parsed2.get("intro_latex") or f"\\section{{{intro_title}}}\n")
             with open(intro_path, 'w', encoding='utf-8') as f:
-                f.write(intro_latex_final)
-            if eval_path:
-                with open(eval_path, 'w', encoding='utf-8') as f:
-                    f.write(evaluation_latex_final)
+                f.write(intro_text)
+            # Evaluation subsection
+            eval_text = writer.ensure_heading("subsection", eval_title, parsed2.get("evaluation_latex") or f"\\subsection{{{eval_title}}}\n")
+            eval_path = assembler.write_subsection(eval_title, eval_text)
+            # Update metadata: section (order 0) + existing subsections + evaluation at the end
+            sections: List[Dict[str, str]] = []
+            sections.append({"order": 0, "type": "section", "title": intro_title, "path": intro_path})
+            # Reindex orders: keep original relative order for subsections
+            next_order = 1
+            for e in subsection_entries:
+                sections.append({"order": next_order, "type": "subsection", "title": e["title"], "path": e["path"]})
+                next_order += 1
+            sections.append({"order": next_order, "type": "subsection", "title": eval_title, "path": eval_path})
+            assembler.update_metadata(sections)
         except Exception:
             pass
 
-        # Collate assistant_message.tex
+    def write_skeleton(self, out_dir: str, intro_title: str, _subsections: List[Dict[str, Any]]) -> str:
+        path = os.path.join(out_dir, "skeleton.json")
+        mapping_path = os.path.join(out_dir, "subsection_mapping.json")
+        normalized: List[Dict[str, Any]] = []
         try:
-            self.collate([s.model_dump() for s in sections], intro_path, os.path.join(out_dir, "assistant_message.tex"))
+            with open(mapping_path, "r", encoding="utf-8") as f:
+                mapping: Dict[str, Any] = json.load(f)
+            for s in mapping.get("subsections", []) or []:
+                items = s.get("items", []) or []
+                topics = [it.get("item_slug") for it in items if it.get("item_slug")]
+                normalized.append({"title": s.get("title", "Section"), "topics": topics})
+        except Exception:
+            # Fall back to empty list if mapping missing; enhancer will handle fallback too
+            normalized = []
+        data = {"intro_title": intro_title, "subsections": normalized}
+        self.write_json(data, path)
+        return path
+
+    def log_skeleton_table(self, skeleton_path: str) -> None:
+        try:
+            with open(skeleton_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            rows = data.get('subsections', []) or []
+            # Compute widths
+            title_w = max(len('subsection'), *(len(r.get('title', '')) for r in rows)) if rows else len('subsection')
+            header = f"{'subsection':<{title_w}} {'#topics':>8} topics"
+            self._log.info(header)
+            for r in rows:
+                title = r.get('title', '')
+                topics = [t for t in (r.get('topics') or []) if t]
+                topics_str = ", ".join(topics)
+                self._log.info(f"{title:<{title_w}} {len(topics):>8} {topics_str}")
         except Exception:
             pass
 
-        return {
-            "course_name": course_name,
-            "module": module_name_out,
-            "out_dir": out_dir,
-            "topics": topics,
-        }
+    def run(self, list_top_k: int, course_name: str) -> dict:
+        out_dir = self.ensure_out_dir()
+        # 1) Discover
+        d = self.discover_topics(list_top_k)
+        topics: List[str] = d["topics"]
+        slug_to_nodes = d["slug_to_nodes"]
+        # Persist topics cache
+        self.write_json({"module": self.module_name, "unique_topics": topics}, os.path.join(self.output_base_dir, course_name, self.module_name, "unique_topics.json"))
+        # 2) Outline
+        parsed = self.outline_module(topics, slug_to_nodes)
+        intro_title = parsed.get("intro_title") or "Introduction"
+        subsections = parsed.get("subsections") or []
+        outline_context = self.build_outline_context(topics, slug_to_nodes)
+        # 3) Mapping
+        self.build_and_write_mapping(subsections, topics, slug_to_nodes, out_dir)
+        # 4) Write skeleton.json
+        sk_path = self.write_skeleton(out_dir, intro_title, subsections)
+        self.log_skeleton_table(sk_path)
+        # 5) Write subsections only (no intro/eval)
+        subsection_entries = self.write_subsections(course_name, subsections)
+        # 6) Finalize intro and evaluation, and update metadata
+        self.finalize_intro_and_eval(course_name, intro_title, subsections, outline_context, subsection_entries)
+        # 7) Collate
+        try:
+            collate_from_metadata(self.output_base_dir, course_name, self.module_name, os.path.join(out_dir, "assistant_message.tex"))
+        except Exception:
+            pass
+        return {"course_name": course_name, "module": self.module_name, "out_dir": out_dir, "topics": topics, "skeleton_path": sk_path}
 
 
