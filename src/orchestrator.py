@@ -73,18 +73,18 @@ def run_enhance_subsections(course_name, module_name, module_slug=None, output_b
         top_k_item = int(os.getenv("D2R_TOP_K_ITEM", "10"))
     agent = SubsectionEnhancerAgent(course_name=course_name, module_name=module_name, module_slug=module_slug, output_base_dir=output_base_dir)
     log.info("[bold cyan]Running[/]: SubsectionEnhancerAgent.run")
-    agent.run(top_k_item=top_k_item)
+    return agent.run(top_k_item=top_k_item)
 
-def run_generate_latex(course, module, module_name, input_base_dir=None, overwrite=False):
+def run_generate_latex(course, module, module_name, input_base_dir=None, overwrite=False, assistant_message_path: str | None = None):
     """
     Run the LaTeX generation pipeline by calling the module directly.
     """
     log.info("[bold cyan]Running[/] (direct): latex_merger.generate_latex_doc.execute")
     from src.latex_merger.generate_latex_doc import execute
     if input_base_dir:
-        execute(course, module, module_name, input_base_dir=input_base_dir, overwrite=overwrite)
+        execute(course, module, module_name, input_base_dir=input_base_dir, overwrite=overwrite, assistant_message_path=assistant_message_path)
     else:
-        execute(course, module, module_name, overwrite=overwrite)
+        execute(course, module, module_name, overwrite=overwrite, assistant_message_path=assistant_message_path)
 
 def orchestrate_pipeline(run_load=True, run_generate=True, metadata_file=None, topic_number=None, overwrite=False, run_skeleton=None, run_enhance=None):
     """
@@ -195,13 +195,21 @@ def orchestrate_pipeline(run_load=True, run_generate=True, metadata_file=None, t
             do_enhance = bool(run_enhance)
             if not do_enhance:
                 log.info("[yellow]Enhancer disabled[/] (set D2R_ENABLE_ENHANCER=1 or pass run_enhance=True to enable)")
+            skeleton_out = None
+            enhance_out = None
             if do_skeleton:
-                run_build_skeleton(module_name, module_slug=module_slug, course_name=course)
+                skeleton_out = run_build_skeleton(module_name, module_slug=module_slug, course_name=course)
             if do_enhance:
-                run_enhance_subsections(course, module_name, module_slug=module_slug)
+                enhance_out = run_enhance_subsections(course, module_name, module_slug=module_slug)
+
+            # Prefer enhanced assistant_message if present, else skeleton
+            assistant_message = (
+                (enhance_out or {}).get("assistant_message")
+                or (skeleton_out or {}).get("assistant_message")
+            )
+
             if run_generate:
-                # Call without extra args to preserve monkeypatched test fakes
-                run_generate_latex(course, module, module_name, overwrite=overwrite)
+                run_generate_latex(course, module, module_name, overwrite=overwrite, assistant_message_path=assistant_message)
         except subprocess.CalledProcessError as e:
             log.error(f"[red]Pipeline step failed[/]: {e}")
 

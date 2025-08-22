@@ -5,6 +5,7 @@ from typing import Dict, Any, List
 from pydantic_ai import Agent
 from src.agents.base_notes_agent import BaseNotesAgent
 from src.latex_utils.writer import collate_from_metadata, LatexSectionWriter
+from src.latex_utils.metadata_store import MetadataStore
 from src.models.latex import SectionRef, SectionContent
 from src.logger import get_logger
 
@@ -14,18 +15,14 @@ class SubsectionEnhancerAgent(BaseNotesAgent):
     def load_skeleton(self, out_dir: str) -> List[Dict[str, Any]]:
         self.log_stage("Load skeleton")
         log = get_logger(__name__)
-        skeleton_path = os.path.join(out_dir, "skeleton.json")
-        mapping_path = os.path.join(out_dir, "subsection_mapping.json")
-        log.info("Looking for skeleton at: %s", skeleton_path)
-        if os.path.exists(skeleton_path):
-            with open(skeleton_path, "r", encoding="utf-8") as f:
-                data: Dict[str, Any] = json.load(f)
-            return data.get("subsections", []) or []
-        # Fallback: normalize subsection_mapping.json to the expected structure
-        log.info("skeleton.json not found. Falling back to mapping: %s", mapping_path)
-        if os.path.exists(mapping_path):
-            with open(mapping_path, "r", encoding="utf-8") as f:
-                mapping: Dict[str, Any] = json.load(f)
+        sk = self.metadata_store.load_skeleton(out_dir)
+        log.info("Looking for skeleton at: %s", os.path.join(out_dir, "skeleton.json"))
+        if sk:
+            return sk.get("subsections", []) or []
+        # Fallback: mapping
+        log.info("skeleton.json not found. Falling back to mapping: %s", os.path.join(out_dir, "subsection_mapping.json"))
+        mapping = self.metadata_store.load_mapping(out_dir)
+        if mapping:
             normalized: List[Dict[str, Any]] = []
             for s in mapping.get("subsections", []) or []:
                 items = s.get("items", []) or []
@@ -81,7 +78,7 @@ class SubsectionEnhancerAgent(BaseNotesAgent):
                 pass
         return sub_path
 
-    def run(self, top_k_item: int) -> None:
+    def run(self, top_k_item: int) -> Dict[str, str] | None:
         log = get_logger(__name__)
 
         # Paths and skeleton
@@ -89,7 +86,7 @@ class SubsectionEnhancerAgent(BaseNotesAgent):
         subsections = self.load_skeleton(out_dir)
         if not subsections:
             log.info("skeleton.json/subsection_mapping.json not found or no subsections; nothing to enhance.")
-            return
+            return None
 
         # Build retrieval cache and slug index
         slug_to_nodes = self.prepare_retrieval(top_k_item)
@@ -115,12 +112,14 @@ class SubsectionEnhancerAgent(BaseNotesAgent):
             log.info("Wrote enhanced subsection %s -> %s", title, sub_path)
             enhanced_any = True
 
-        # Collate assistant_message.tex using shared metadata collation only if enhanced
+        assistant_message_path = None
         if enhanced_any:
             try:
-                collate_from_metadata(self.output_base_dir, self.course_name, self.module_name, os.path.join(out_dir, "assistant_message.tex"))
+                assistant_message_path = os.path.join(enhanced_dir, "assistant_message.tex")
+                collate_from_metadata(self.output_base_dir, self.course_name, self.module_name, assistant_message_path)
             except Exception:
                 pass
+        return {"assistant_message": assistant_message_path} if assistant_message_path else None
 
 
 

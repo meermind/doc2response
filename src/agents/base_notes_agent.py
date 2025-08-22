@@ -12,6 +12,7 @@ from src.models.settings import Settings
 from models.config import TiDBSettings
 from src.models.paths import OutputPaths
 from src.latex_utils.writer import collate_assistant_message
+from src.latex_utils.metadata_store import MetadataStore
 from src.logger import get_logger
 
 
@@ -22,6 +23,7 @@ class BaseNotesAgent:
         module_name: str,
         module_slug: Optional[str],
         output_base_dir: Optional[str] = None,
+        metadata_store: MetadataStore | None = None,
     ) -> None:
         self.settings = Settings()
         self.db = TiDBSettings()
@@ -58,6 +60,7 @@ class BaseNotesAgent:
         )
 
         self._log = get_logger(__name__)
+        self.metadata_store = metadata_store or MetadataStore()
 
     def base_filters(self) -> List[Dict[str, str]]:
         if self.module_slug:

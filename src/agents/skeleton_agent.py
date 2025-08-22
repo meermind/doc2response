@@ -4,7 +4,8 @@ from typing import Dict, Any, List
 
 from pydantic_ai import Agent
 from src.agents.base_notes_agent import BaseNotesAgent
-from src.latex_utils.writer import collate_from_metadata, LatexAssembler, LatexSectionWriter
+from src.latex_utils.writer import LatexAssembler, LatexSectionWriter
+from src.latex_utils.metadata_store import MetadataStore
 from src.models.paths import OutputPaths
 
 
@@ -47,12 +48,7 @@ class SkeletonAgent(BaseNotesAgent):
             parsed = {"intro_title": "Introduction", "subsections": [{"title": t, "topics": [t]} for t in topics]}
         return parsed
 
-    def _build_subsection_mapping(
-        self,
-        subsections: List[Dict[str, Any]],
-        available_slugs: set,
-        slug_to_nodes: Dict[str, List[Any]],
-    ) -> Dict[str, Any]:
+    def _build_subsection_mapping(self, subsections: List[Dict[str, Any]], available_slugs: set, slug_to_nodes: Dict[str, List[Any]]) -> Dict[str, Any]:
         def lookup_item(slug: str) -> Dict[str, str]:
             nodes = slug_to_nodes.get(slug, [])
             for n in nodes:
@@ -72,6 +68,7 @@ class SkeletonAgent(BaseNotesAgent):
             items = [lookup_item(t) for t in slugs if t in available_slugs]
             missing = [t for t in slugs if t not in available_slugs]
             entry: Dict[str, Any] = {"title": title, "items": items, "missing_topics": missing}
+            # Optionally propagate subsubsections if present
             ss_list = []
             for ss in (s.get("subsubsections") or []):
                 ss_title = ss.get("title", "Subsection")
@@ -84,9 +81,9 @@ class SkeletonAgent(BaseNotesAgent):
             mapping["subsections"].append(entry)
         return mapping
 
-    def build_and_write_mapping(self, subsections: List[Dict[str, Any]], topics: List[str], slug_to_nodes: Dict[str, List[Any]], out_dir: str) -> None:
+    def build_and_write_mapping(self, subsections: List[Dict[str, Any]], topics: List[str], slug_to_nodes: Dict[str, List[Any]], out_dir: str) -> str:
         mapping = self._build_subsection_mapping(subsections, set(topics), slug_to_nodes)
-        self.write_json(mapping, os.path.join(out_dir, "subsection_mapping.json"))
+        return self.metadata_store.save_mapping(out_dir, mapping)
 
     def write_subsections(self, course_name: str, subsections: List[Dict[str, Any]]) -> List[Dict[str, str]]:
         assembler = LatexAssembler(self.output_base_dir, course_name, self.module_name)
@@ -145,22 +142,13 @@ class SkeletonAgent(BaseNotesAgent):
             pass
 
     def write_skeleton(self, out_dir: str, intro_title: str, _subsections: List[Dict[str, Any]]) -> str:
-        path = os.path.join(out_dir, "skeleton.json")
-        mapping_path = os.path.join(out_dir, "subsection_mapping.json")
+        mapping = self.metadata_store.load_mapping(out_dir)
         normalized: List[Dict[str, Any]] = []
-        try:
-            with open(mapping_path, "r", encoding="utf-8") as f:
-                mapping: Dict[str, Any] = json.load(f)
-            for s in mapping.get("subsections", []) or []:
-                items = s.get("items", []) or []
-                topics = [it.get("item_slug") for it in items if it.get("item_slug")]
-                normalized.append({"title": s.get("title", "Section"), "topics": topics})
-        except Exception:
-            # Fall back to empty list if mapping missing; enhancer will handle fallback too
-            normalized = []
-        data = {"intro_title": intro_title, "subsections": normalized}
-        self.write_json(data, path)
-        return path
+        for s in mapping.get("subsections", []) or []:
+            items = s.get("items", []) or []
+            topics = [it.get("item_slug") for it in items if it.get("item_slug")]
+            normalized.append({"title": s.get("title", "Section"), "topics": topics})
+        return self.metadata_store.save_skeleton(out_dir, intro_title, normalized)
 
     def log_skeleton_table(self, skeleton_path: str) -> None:
         try:
@@ -186,7 +174,7 @@ class SkeletonAgent(BaseNotesAgent):
         topics: List[str] = d["topics"]
         slug_to_nodes = d["slug_to_nodes"]
         # Persist topics cache
-        self.write_json({"module": self.module_name, "unique_topics": topics}, os.path.join(self.output_base_dir, course_name, self.module_name, "unique_topics.json"))
+        self.metadata_store.save_unique_topics(self.output_base_dir, course_name, self.module_name, topics)
         # 2) Outline
         parsed = self.outline_module(topics, slug_to_nodes)
         intro_title = parsed.get("intro_title") or "Introduction"
@@ -201,11 +189,13 @@ class SkeletonAgent(BaseNotesAgent):
         subsection_entries = self.write_subsections(course_name, subsections)
         # 6) Finalize intro and evaluation, and update metadata
         self.finalize_intro_and_eval(course_name, intro_title, subsections, outline_context, subsection_entries)
-        # 7) Collate
+        # 7) Collate and return assistant_message path
+        assistant_message_path = os.path.join(out_dir, "assistant_message.tex")
         try:
-            collate_from_metadata(self.output_base_dir, course_name, self.module_name, os.path.join(out_dir, "assistant_message.tex"))
+            assembler = LatexAssembler(self.output_base_dir, course_name, self.module_name)
+            assembler.collate_from_metadata(self.output_base_dir, assistant_message_path)
         except Exception:
             pass
-        return {"course_name": course_name, "module": self.module_name, "out_dir": out_dir, "topics": topics, "skeleton_path": sk_path}
+        return {"course_name": course_name, "module": self.module_name, "out_dir": out_dir, "topics": topics, "skeleton_path": sk_path, "assistant_message": assistant_message_path}
 
 
